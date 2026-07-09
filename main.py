@@ -425,8 +425,19 @@ class ROVMainWindow(QMainWindow):
             # Chuyển Euler → Quaternion
             quat = self._euler_to_quat(self._roll, self._pitch, self._yaw)
 
-        # 5. Cập nhật 3D widget
-        self.gl_3d.update_pose(pos, quat)
+        # 5. Cập nhật 3D widget (kèm dữ liệu HUD)
+        vel_now  = self._vel_ned if self._connected else np.array(state.get("linear_velocity", [0,0,0]))
+        spd_now  = float(np.linalg.norm(vel_now))
+        roll_deg  = math.degrees(self._roll)
+        pitch_deg = math.degrees(self._pitch)
+        self.gl_3d.update_pose(
+            pos, quat,
+            heading_deg = self._heading,
+            depth_m     = self._depth,
+            speed_mps   = spd_now,
+            roll_deg    = roll_deg,
+            pitch_deg   = pitch_deg,
+        )
 
         # 6. Cập nhật trajectory
         if not self._origin_set and np.any(pos != 0):
@@ -438,8 +449,8 @@ class ROVMainWindow(QMainWindow):
         self.gl_3d.update_fov_effect(self._heading)
 
         # 8. Cập nhật la bàn 3D (Compass 3D) và Radar Point Cloud
-        vel = self._vel_ned if self._connected else state["linear_velocity"]
-        self.compass_3d.update_state(quat, vel)
+        vel = self._vel_ned if self._connected else np.array(state.get("linear_velocity", [0,0,0]))
+        self.compass_3d.update_state(quat, vel, depth=self._depth)
 
         # 9. Cập nhật Power widget
         if self._connected:
