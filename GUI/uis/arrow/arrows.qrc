@@ -1,0 +1,27 @@
+<RCC>
+  <qresource prefix="arrows">
+    <file>crosshairs-svgrepo-com.svg</file>
+    <file>stop-svgrepo-com.svg</file>
+    <file>minus-svgrepo-com.svg</file>
+    <file>plus-svgrepo-com.svg</file>
+    <file>double-down-svgrepo-com.svg</file>
+    <file>double-up-svgrepo-com.svg</file>
+    <file>stop-svgrepo-com.svg</file>
+    <file>arrow-down-svgrepo-com.svg</file>
+    <file>arrow-left-down-svgrepo-com.svg</file>
+    <file>arrow-left-svgrepo-com.svg</file>
+    <file>arrow-left-up-svgrepo-com.svg</file>
+    <file>arrow-right-down-svgrepo-com.svg</file>
+    <file>arrow-right-svgrepo-com.svg</file>
+    <file>arrow-right-up-svgrepo-com.svg</file>
+    <file>arrow-up-svgrepo-com.svg</file>
+  </qresource>
+  <qresource prefix="icon">
+    <file>wifi-svgrepo-com.svg</file>
+    <file>robotic-arm-svgrepo-com.svg</file>
+    <file>camera-svgrepo-com.svg</file>
+    <file>flashlight-svgrepo-com.svg</file>
+    <file>setting-5-svgrepo-com.svg</file>
+    <file>icon-logo.svg</file>
+  </qresource>
+</RCC>

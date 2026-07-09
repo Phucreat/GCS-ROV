@@ -1,0 +1,171 @@
+/* =========================================
+   1. GLOBAL THIẾT LẬP CHUNG (FONT CHỮ)
+========================================= */
+* {
+    /* Đặt ưu tiên các font Tech. Nếu máy không có sẽ lùi về Segoe UI */
+    font-family: "Rajdhani", "Orbitron", "Exo 2", "Segoe UI", sans-serif;
+    color: #A0B2C6; /* Màu xám xanh nhạt làm màu mặc định cho toàn bộ text */
+}
+
+QMainWindow, #bg_app {
+    background-color: #060B14;
+}
+
+/* =========================================
+   QUẢN LÝ CÁC PANEL (KHUNG CHÍNH)
+   - Đã loại bỏ margin để không làm xô lệch layout
+========================================= */
+#frm_header, 
+#frm_simulate, 
+#frm_telemetry_data, 
+#frm_power_sys, 
+#frm_control_right,
+#frm_control_rov {
+    background-color: #0D1726;
+    border: 1px solid #1E3550;
+    border-radius: 6px;
+}
+
+/* Các frame chứa bố cục bên trong không được có viền */
+QFrame {
+    border: none;
+}
+
+/* =========================================
+   TIÊU ĐỀ & LABEL (TEXT)
+========================================= */
+QLabel {
+    background: transparent;
+}
+
+/* =========================================
+   2. TIÊU ĐỀ CÁC PANEL CHÍNH (SECTION HEADERS)
+========================================= */
+#lbl_titlename, #lbl_simulate_camera, #lbl_simulate_motion, 
+#lbl_telemetry_data, #lbl_power_system, #lbl_control_total {
+    color: #E0E6ED; /* Trắng xám sáng */
+    font-size: 11px;
+    font-weight: 800; /* Rất đậm */
+    letter-spacing: 1.5px; /* Giãn chữ tạo cảm giác viễn tưởng */
+    text-transform: uppercase;
+}
+/* =========================================
+   3. NHÃN PHỤ TRÊN TOP BAR (LABELS)
+========================================= */
+#lbl_mission, #lbl_status_lbl, #lbl_mode, #lbl_connection, #lbl_info_team,
+#lbl_control_speed {
+    color: #5B748E; /* Xám xanh tối (chìm xuống để tôn thông số lên) */
+    font-size: 9px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+/* =========================================
+   4. THÔNG SỐ TRÊN TOP BAR (VALUES)
+========================================= */
+/* Màu Xanh Cyan cho các giá trị thông thường */
+#lbl_mode_value, #lbl_info_value, #lbl_date, #lbl_time, #lbl_nameapp {
+    color: #00A8FF; 
+    font-size: 11px;
+    font-weight: bold;
+}
+
+/* Màu Xanh Lá cho trạng thái tốt (Active, Strong) */
+#lbl_status_value, #lbl_connection_value {
+    color: #00FF66; 
+    font-size: 11px;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+/* =========================================
+   5. CÁC THÔNG SỐ HIỂN THỊ LỚN (BIG NUMBERS)
+========================================= */
+#lbl_depth_pressure, #lbl_view_compass {
+    color: #FFFFFF; /* Trắng tinh khiết */
+    font-size: 20px; /* Kích thước lớn */
+    font-weight: bold;
+}
+
+/* =========================================
+   BUTTONS (NÚT BẤM ĐIỀU KHIỂN)
+   - Đã loại bỏ min-width, min-height và giảm padding
+   - Nút sẽ tự động co giãn theo kích thước bạn kéo trong Qt Designer
+========================================= */
+QPushButton {
+    background-color: #0D1726; /* Chỉnh lại màu nền nút cho đồng bộ */
+    color: #00A8FF;
+    border: 1px solid #1E3550;
+    border-radius: 4px;
+    font-weight: bold;
+    font-size: 11px;
+}
+
+QPushButton:hover {
+    background-color: rgba(0, 168, 255, 0.15);
+    border: 1px solid #00A8FF;
+}
+
+QPushButton:pressed {
+    background-color: #00A8FF;
+    color: #060B14;
+}
+
+#pbtn_iconheader {
+    color: #00A8FF;
+    font-size: 10px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+#pbtn_iconheader:pressed {
+    color: #060B14; /* Chữ đen lại khi bấm nút sáng lên */
+}
+#setup_systeam {
+    color: #00A8FF;
+    font-size: 10px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+#setup_systeam:pressed {
+    color: #060B14; /* Chữ đen lại khi bấm nút sáng lên */
+}
+/* =========================================
+   7. BẢNG TELEMETRY (TABLE HEADERS & ITEMS)
+========================================= */
+QHeaderView::section {
+    color: #5B748E; /* Trùng màu với các nhãn phụ */
+    font-size: 9px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+QTableView {
+    color: #0D1726;
+    font-size: 11px;
+}
+
+/* =========================================
+   COMBOBOX & OPENGL WIDGETS
+========================================= */
+QComboBox {
+    background-color: #0D1726;
+    border: 1px solid #1E3550;
+    border-radius: 3px;
+    color: #00A8FF;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #0D1726;
+    color: #00A8FF;
+    border: 1px solid #1E3550;
+    selection-background-color: #00A8FF;
+    selection-color: #060B14;
+}
+
+QOpenGLWidget {
+    background-color: #000000;
+    border: 1px solid #1E3550; 
+    border-radius: 4px;
+}

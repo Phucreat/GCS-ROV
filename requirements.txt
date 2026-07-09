@@ -1,0 +1,6 @@
+PyQt6>=6.4.0
+pyqtgraph>=0.13.0
+pybullet>=3.2.5
+numpy>=1.24.0
+pymavlink>=2.4.37
+pyopengl>=3.1.6

@@ -1,0 +1,259 @@
+#bg_app {
+    background-color: #111;
+}
+/*//////////////////////////////////////////////////////////
+FRM_HEADER */
+
+#frm_header {
+    background-color: #222;
+    min-height: 40px;
+    max-height: 40px;
+}
+
+#frm_header_title {
+    background-color: #333;
+    padding : 0;
+    margin : 0;
+    border : none;
+}
+#lbl_nameapp {
+    color : #fff;
+    font-weight: bold;
+    font-size: 12px;      
+    padding: 0 5px;    
+    min-height: 20px;     
+    line-height: 100%;    
+}
+
+#frm_header_date {
+    background-color: #333;
+}
+#lbl_date {
+    color : #fff;
+    font-weight: bold;
+    font-size: 12px;      
+    padding: 0 5px;    
+    min-height: 20px;     
+    line-height: 100%; 
+}
+
+/*//////////////////////////////////////////////////////////
+FRM_SIMULATE */
+
+#frm_simulate {
+    background-color: #222;
+}
+
+#frm_simulate_camera {
+    background-color: #333;
+}
+#lbl_simulate_camera {
+    color : #fff;
+    font-weight: bold;
+    font-size: 10px;      
+    padding: 0 2px;    
+    min-height: 15px;    
+    max-height: 15px; 
+    line-height: 100%;
+    qproperty-alignment: 'AlignCenter';
+}
+
+#frm_simulate_motion {
+    background-color: #333;
+}
+
+#lbl_simulate_motion{
+    color : #fff;
+    font-weight: bold;
+    font-size: 10px;      
+    padding: 0 2px;    
+    min-height: 15px;    
+    max-height: 15px; 
+    line-height: 100%;
+    qproperty-alignment: 'AlignCenter';
+}
+
+#frm_simulate_view {
+    background-color: #333;
+}
+
+#frm_simulate_view_top {
+    background-color: #444;
+}
+
+#lbl_poseview{
+    color : #fff;
+    font-weight: bold;
+    font-size: 10px;      
+    padding: 0 2px;    
+    min-height: 15px;    
+    max-height: 15px; 
+    line-height: 100%;
+    qproperty-alignment: 'AlignCenter';
+}
+
+#frm_simulate_view_bottom {
+    background-color: #444;
+}
+
+#lbl_view_compass {
+    color : #fff;
+    font-weight: bold;
+    font-size: 10px;      
+    padding: 0 2px;    
+    min-height: 15px;    
+    max-height: 15px; 
+    line-height: 100%;
+    qproperty-alignment: 'AlignCenter';
+}
+
+#frm_simulate_control_depth_led {
+    background-color: #333;
+}
+
+#frm_simulate_control_depth {
+    background-color: #444;
+}
+#lbl_depth_pressure {
+    color : #fff;
+    font-weight: bold;
+    font-size: 10px;      
+    padding: 0 2px;    
+    min-height: 15px;    
+    max-height: 15px; 
+    line-height: 100%;
+    qproperty-alignment: 'AlignCenter';
+}
+
+#frm_simulate_control_led {
+    background-color: #444;
+}
+/*//////////////////////////////////////////////////////////
+FRM_CONTROL */
+
+#frm_control {
+    background-color: #222;
+}
+
+#frm_control_left {
+    background-color: #333;
+}
+
+#frm_control_center {
+    background-color: #333;
+}
+
+#frm_control_right {
+    background-color: #333;
+}
+#frm_control_speed{
+    background: #444;
+    min-height: 40px;
+    max-height: 40px;
+}
+#lbl_control_speed {
+    background-color: #555;
+    color : #fff;
+    font-weight: bold;
+    font-size: 10px;      
+    padding: 0 2px;    
+    min-height: 15px;    
+    max-height: 15px; 
+    line-height: 100%;
+    qproperty-alignment: 'AlignCenter';
+}
+#lbl_control_speed_number{
+    background-color: #555;
+    color : #fff;
+    font-weight: bold;
+    font-size: 10px;      
+    padding: 0 2px;    
+    min-height: 15px;    
+    max-height: 15px; 
+    line-height: 100%;
+    qproperty-alignment: 'AlignCenter';
+}
+#pbtn_speed_increase{
+    background-color: #fff;
+    color: #000;
+    font-weight: bold;
+    font-size: 12px;
+}
+#pbtn_speed_decrease{
+    background-color: #fff;
+    color: #000;
+    font-weight: bold;
+    font-size: 12px;
+}
+#frm_control_led {
+    background: #444;
+    min-height: 40px;
+    max-height: 40px;
+}
+
+#lbl_control_led{
+    background-color: #555;
+    color : #fff;
+    font-weight: bold;
+    font-size: 10px;      
+    padding: 0 2px;    
+    min-height: 15px;    
+    max-height: 15px; 
+    line-height: 100%;
+    qproperty-alignment: 'AlignCenter';
+}
+
+#lbl_control_led_number{
+    background-color: #555;
+    color : #fff;
+    font-weight: bold;
+    font-size: 10px;      
+    padding: 0 2px;    
+    min-height: 15px;    
+    max-height: 15px; 
+    line-height: 100%;
+    qproperty-alignment: 'AlignCenter';
+}
+
+#pbtn_led_increase{
+    background-color: #fff;
+    color: #000;
+    font-weight: bold;
+    font-size: 12px;
+}
+
+#pbtn_led_decrease{
+    background-color: #fff;
+    color: #000;
+    font-weight: bold;
+    font-size: 12px;
+}
+
+/*//////CONTROL RIGHT///////////*/
+#frm_control_rov {
+    background: #444;
+}
+
+#lbl_control_rov_yaw{
+    background-color: #555;
+    color : #fff;
+    font-weight: bold;
+    font-size: 10px;      
+    padding: 0 2px;    
+    min-height: 15px;    
+    max-height: 15px; 
+    line-height: 100%;
+    qproperty-alignment: 'AlignCenter';
+}
+
+#lbl_control_rov_right{
+    background-color: #555;
+    color : #fff;
+    font-weight: bold;
+    font-size: 10px;      
+    padding: 0 2px;    
+    min-height: 15px;    
+    max-height: 15px; 
+    line-height: 100%;
+    qproperty-alignment: 'AlignCenter';
+}

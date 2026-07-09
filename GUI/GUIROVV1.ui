@@ -1,0 +1,1433 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1085</width>
+    <height>872</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>MainWindow</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="verticalLayout">
+    <item>
+     <widget class="QFrame" name="stylesheet">
+      <property name="styleSheet">
+       <string notr="true">/* =========================================
+   1. GLOBAL THIẾT LẬP CHUNG (FONT CHỮ)
+========================================= */
+* {
+    /* Đặt ưu tiên các font Tech. Nếu máy không có sẽ lùi về Segoe UI */
+    font-family: &quot;Rajdhani&quot;, &quot;Orbitron&quot;, &quot;Exo 2&quot;, &quot;Segoe UI&quot;, sans-serif;
+    color: #A0B2C6; /* Màu xám xanh nhạt làm màu mặc định cho toàn bộ text */
+}
+
+QMainWindow, #bg_app {
+    background-color: #060B14;
+}
+
+/* =========================================
+   QUẢN LÝ CÁC PANEL (KHUNG CHÍNH)
+   - Đã loại bỏ margin để không làm xô lệch layout
+========================================= */
+#frm_header, 
+#frm_simulate, 
+#frm_telemetry_data, 
+#frm_power_sys, 
+#frm_control_right,
+#frm_control_rov {
+    background-color: #0D1726;
+    border: 1px solid #1E3550;
+    border-radius: 6px;
+}
+
+/* Các frame chứa bố cục bên trong không được có viền */
+QFrame {
+    border: none;
+}
+
+/* =========================================
+   TIÊU ĐỀ &amp; LABEL (TEXT)
+========================================= */
+QLabel {
+    background: transparent;
+}
+
+/* =========================================
+   2. TIÊU ĐỀ CÁC PANEL CHÍNH (SECTION HEADERS)
+========================================= */
+#lbl_titlename, #lbl_simulate_camera, #lbl_simulate_motion, 
+#lbl_telemetry_data, #lbl_power_system, #lbl_control_total {
+    color: #E0E6ED; /* Trắng xám sáng */
+    font-size: 11px;
+    font-weight: 800; /* Rất đậm */
+    letter-spacing: 1.5px; /* Giãn chữ tạo cảm giác viễn tưởng */
+    text-transform: uppercase;
+}
+/* =========================================
+   3. NHÃN PHỤ TRÊN TOP BAR (LABELS)
+========================================= */
+#lbl_mission, #lbl_status_lbl, #lbl_mode, #lbl_connection, #lbl_info_team,
+#lbl_control_speed {
+    color: #5B748E; /* Xám xanh tối (chìm xuống để tôn thông số lên) */
+    font-size: 9px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+/* =========================================
+   4. THÔNG SỐ TRÊN TOP BAR (VALUES)
+========================================= */
+/* Màu Xanh Cyan cho các giá trị thông thường */
+#lbl_mode_value, #lbl_info_value, #lbl_date, #lbl_time, #lbl_nameapp {
+    color: #00A8FF; 
+    font-size: 11px;
+    font-weight: bold;
+}
+
+/* Màu Xanh Lá cho trạng thái tốt (Active, Strong) */
+#lbl_status_value, #lbl_connection_value {
+    color: #00FF66; 
+    font-size: 11px;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+/* =========================================
+   5. CÁC THÔNG SỐ HIỂN THỊ LỚN (BIG NUMBERS)
+========================================= */
+#lbl_depth_pressure, #lbl_view_compass {
+    color: #FFFFFF; /* Trắng tinh khiết */
+    font-size: 20px; /* Kích thước lớn */
+    font-weight: bold;
+}
+
+/* =========================================
+   BUTTONS (NÚT BẤM ĐIỀU KHIỂN)
+   - Đã loại bỏ min-width, min-height và giảm padding
+   - Nút sẽ tự động co giãn theo kích thước bạn kéo trong Qt Designer
+========================================= */
+QPushButton {
+    background-color: #0D1726; /* Chỉnh lại màu nền nút cho đồng bộ */
+    color: #00A8FF;
+    border: 1px solid #1E3550;
+    border-radius: 4px;
+    font-weight: bold;
+    font-size: 11px;
+}
+
+QPushButton:hover {
+    background-color: rgba(0, 168, 255, 0.15);
+    border: 1px solid #00A8FF;
+}
+
+QPushButton:pressed {
+    background-color: #00A8FF;
+    color: #060B14;
+}
+
+#pbtn_iconheader {
+    color: #00A8FF;
+    font-size: 10px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+#pbtn_iconheader:pressed {
+    color: #060B14; /* Chữ đen lại khi bấm nút sáng lên */
+}
+#setup_systeam {
+    color: #00A8FF;
+    font-size: 10px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+#setup_systeam:pressed {
+    color: #060B14; /* Chữ đen lại khi bấm nút sáng lên */
+}
+/* =========================================
+   7. BẢNG TELEMETRY (TABLE HEADERS &amp; ITEMS)
+========================================= */
+QHeaderView::section {
+    color: #5B748E; /* Trùng màu với các nhãn phụ */
+    font-size: 9px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+QTableView {
+    color: #0D1726;
+    font-size: 11px;
+}
+
+/* =========================================
+   COMBOBOX &amp; OPENGL WIDGETS
+========================================= */
+QComboBox {
+    background-color: #0D1726;
+    border: 1px solid #1E3550;
+    border-radius: 3px;
+    color: #00A8FF;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #0D1726;
+    color: #00A8FF;
+    border: 1px solid #1E3550;
+    selection-background-color: #00A8FF;
+    selection-color: #060B14;
+}
+
+QOpenGLWidget {
+    background-color: #000000;
+    border: 1px solid #1E3550; 
+    border-radius: 4px;
+}</string>
+      </property>
+      <property name="frameShape">
+       <enum>QFrame::StyledPanel</enum>
+      </property>
+      <property name="frameShadow">
+       <enum>QFrame::Raised</enum>
+      </property>
+      <property name="lineWidth">
+       <number>1</number>
+      </property>
+      <layout class="QVBoxLayout" name="verticalLayout_2">
+       <property name="spacing">
+        <number>6</number>
+       </property>
+       <property name="leftMargin">
+        <number>0</number>
+       </property>
+       <property name="topMargin">
+        <number>0</number>
+       </property>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <property name="bottomMargin">
+        <number>0</number>
+       </property>
+       <item>
+        <widget class="QFrame" name="bg_app">
+         <property name="frameShape">
+          <enum>QFrame::StyledPanel</enum>
+         </property>
+         <property name="frameShadow">
+          <enum>QFrame::Raised</enum>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayout_3" stretch="0,7,5">
+          <property name="spacing">
+           <number>6</number>
+          </property>
+          <property name="leftMargin">
+           <number>2</number>
+          </property>
+          <property name="topMargin">
+           <number>2</number>
+          </property>
+          <property name="rightMargin">
+           <number>2</number>
+          </property>
+          <property name="bottomMargin">
+           <number>2</number>
+          </property>
+          <item>
+           <widget class="QFrame" name="frm_header">
+            <property name="frameShape">
+             <enum>QFrame::StyledPanel</enum>
+            </property>
+            <property name="frameShadow">
+             <enum>QFrame::Raised</enum>
+            </property>
+            <layout class="QHBoxLayout" name="horizontalLayout">
+             <property name="spacing">
+              <number>15</number>
+             </property>
+             <property name="leftMargin">
+              <number>9</number>
+             </property>
+             <item>
+              <widget class="QPushButton" name="pbtn_iconheader">
+               <property name="text">
+                <string/>
+               </property>
+               <property name="icon">
+                <iconset resource="uis/arrow/arrows.qrc">
+                 <normaloff>:/icon/icon-logo.svg</normaloff>:/icon/icon-logo.svg</iconset>
+               </property>
+               <property name="iconSize">
+                <size>
+                 <width>40</width>
+                 <height>40</height>
+                </size>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QFrame" name="Vfrm_nameapp">
+               <property name="frameShape">
+                <enum>QFrame::StyledPanel</enum>
+               </property>
+               <property name="frameShadow">
+                <enum>QFrame::Raised</enum>
+               </property>
+               <layout class="QVBoxLayout" name="verticalLayout_21">
+                <property name="spacing">
+                 <number>1</number>
+                </property>
+                <property name="leftMargin">
+                 <number>0</number>
+                </property>
+                <property name="topMargin">
+                 <number>0</number>
+                </property>
+                <property name="rightMargin">
+                 <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>0</number>
+                </property>
+                <item>
+                 <widget class="QLabel" name="lbl_nameapp">
+                  <property name="text">
+                   <string>E3 LAB</string>
+                  </property>
+                  <property name="scaledContents">
+                   <bool>false</bool>
+                  </property>
+                  <property name="alignment">
+                   <set>Qt::AlignCenter</set>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QLabel" name="lbl_titlename">
+                  <property name="text">
+                   <string>ROV CONTROL SYSTEM</string>
+                  </property>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
+             <item>
+              <widget class="QFrame" name="frm_header_title">
+               <property name="frameShape">
+                <enum>QFrame::StyledPanel</enum>
+               </property>
+               <property name="frameShadow">
+                <enum>QFrame::Raised</enum>
+               </property>
+               <layout class="QHBoxLayout" name="horizontalLayout_5">
+                <property name="leftMargin">
+                 <number>0</number>
+                </property>
+                <property name="topMargin">
+                 <number>0</number>
+                </property>
+                <property name="rightMargin">
+                 <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>0</number>
+                </property>
+               </layout>
+              </widget>
+             </item>
+             <item>
+              <widget class="QFrame" name="Vfrm_mission">
+               <property name="frameShape">
+                <enum>QFrame::StyledPanel</enum>
+               </property>
+               <property name="frameShadow">
+                <enum>QFrame::Raised</enum>
+               </property>
+               <layout class="QVBoxLayout" name="verticalLayout_7">
+                <property name="spacing">
+                 <number>1</number>
+                </property>
+                <property name="leftMargin">
+                 <number>0</number>
+                </property>
+                <property name="topMargin">
+                 <number>0</number>
+                </property>
+                <property name="rightMargin">
+                 <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>0</number>
+                </property>
+                <item>
+                 <widget class="QLabel" name="lbl_mission">
+                  <property name="text">
+                   <string>MODEL</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QComboBox" name="cb_mission">
+                  <item>
+                   <property name="text">
+                    <string>3DC</string>
+                   </property>
+                  </item>
+                  <item>
+                   <property name="text">
+                    <string>6DC</string>
+                   </property>
+                  </item>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
+             <item>
+              <widget class="QFrame" name="Vfrm_status_sys">
+               <property name="frameShape">
+                <enum>QFrame::StyledPanel</enum>
+               </property>
+               <property name="frameShadow">
+                <enum>QFrame::Raised</enum>
+               </property>
+               <layout class="QVBoxLayout" name="verticalLayout_10" stretch="0,0">
+                <property name="spacing">
+                 <number>1</number>
+                </property>
+                <property name="leftMargin">
+                 <number>0</number>
+                </property>
+                <property name="topMargin">
+                 <number>0</number>
+                </property>
+                <property name="rightMargin">
+                 <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>0</number>
+                </property>
+                <item>
+                 <widget class="QLabel" name="lbl_status_lbl">
+                  <property name="text">
+                   <string>STATUS</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QLabel" name="lbl_status_value">
+                  <property name="text">
+                   <string>ACTIVE</string>
+                  </property>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
+             <item>
+              <widget class="QFrame" name="Vfrm_mode_control">
+               <property name="frameShape">
+                <enum>QFrame::StyledPanel</enum>
+               </property>
+               <property name="frameShadow">
+                <enum>QFrame::Raised</enum>
+               </property>
+               <layout class="QVBoxLayout" name="verticalLayout_11">
+                <property name="spacing">
+                 <number>1</number>
+                </property>
+                <property name="leftMargin">
+                 <number>0</number>
+                </property>
+                <property name="topMargin">
+                 <number>0</number>
+                </property>
+                <property name="rightMargin">
+                 <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>0</number>
+                </property>
+                <item>
+                 <widget class="QLabel" name="lbl_mode">
+                  <property name="text">
+                   <string>ROV MODE</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QLabel" name="lbl_mode_value">
+                  <property name="text">
+                   <string>MANUAL</string>
+                  </property>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
+             <item>
+              <widget class="QFrame" name="Hfrm_connection">
+               <property name="frameShape">
+                <enum>QFrame::StyledPanel</enum>
+               </property>
+               <property name="frameShadow">
+                <enum>QFrame::Raised</enum>
+               </property>
+               <layout class="QHBoxLayout" name="horizontalLayout_9">
+                <property name="spacing">
+                 <number>1</number>
+                </property>
+                <property name="leftMargin">
+                 <number>0</number>
+                </property>
+                <property name="topMargin">
+                 <number>0</number>
+                </property>
+                <property name="rightMargin">
+                 <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>0</number>
+                </property>
+                <item>
+                 <widget class="QFrame" name="Vfrm_connection_status">
+                  <property name="frameShape">
+                   <enum>QFrame::StyledPanel</enum>
+                  </property>
+                  <property name="frameShadow">
+                   <enum>QFrame::Raised</enum>
+                  </property>
+                  <layout class="QVBoxLayout" name="verticalLayout_15">
+                   <item>
+                    <widget class="QLabel" name="lbl_connection">
+                     <property name="text">
+                      <string>🛜 Connection</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QLabel" name="lbl_connection_value">
+                     <property name="text">
+                      <string>STRONG</string>
+                     </property>
+                    </widget>
+                   </item>
+                  </layout>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
+             <item>
+              <widget class="QFrame" name="Vfrm_info_auth">
+               <property name="frameShape">
+                <enum>QFrame::StyledPanel</enum>
+               </property>
+               <property name="frameShadow">
+                <enum>QFrame::Raised</enum>
+               </property>
+               <layout class="QVBoxLayout" name="verticalLayout_17">
+                <item>
+                 <widget class="QLabel" name="lbl_info_team">
+                  <property name="text">
+                   <string>TEAM</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QLabel" name="lbl_info_value">
+                  <property name="text">
+                   <string>E3 LAB</string>
+                  </property>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
+             <item>
+              <spacer name="horizontalSpacer_2">
+               <property name="orientation">
+                <enum>Qt::Horizontal</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>573</width>
+                 <height>19</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+             <item>
+              <widget class="QFrame" name="frm_header_date">
+               <property name="frameShape">
+                <enum>QFrame::StyledPanel</enum>
+               </property>
+               <property name="frameShadow">
+                <enum>QFrame::Raised</enum>
+               </property>
+               <layout class="QHBoxLayout" name="horizontalLayout_2">
+                <property name="leftMargin">
+                 <number>0</number>
+                </property>
+                <property name="topMargin">
+                 <number>0</number>
+                </property>
+                <property name="rightMargin">
+                 <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>0</number>
+                </property>
+               </layout>
+              </widget>
+             </item>
+             <item>
+              <widget class="QFrame" name="Vfrm_time">
+               <property name="frameShape">
+                <enum>QFrame::StyledPanel</enum>
+               </property>
+               <property name="frameShadow">
+                <enum>QFrame::Raised</enum>
+               </property>
+               <layout class="QVBoxLayout" name="verticalLayout_18">
+                <property name="spacing">
+                 <number>1</number>
+                </property>
+                <property name="leftMargin">
+                 <number>0</number>
+                </property>
+                <property name="topMargin">
+                 <number>0</number>
+                </property>
+                <property name="rightMargin">
+                 <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>0</number>
+                </property>
+                <item>
+                 <widget class="QLabel" name="lbl_time">
+                  <property name="text">
+                   <string>14:35:42</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QLabel" name="lbl_date">
+                  <property name="text">
+                   <string>VN 2026/07/06</string>
+                  </property>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
+             <item>
+              <widget class="QPushButton" name="setup_systeam">
+               <property name="text">
+                <string/>
+               </property>
+               <property name="icon">
+                <iconset resource="uis/arrow/arrows.qrc">
+                 <normaloff>:/icon/setting-5-svgrepo-com.svg</normaloff>:/icon/setting-5-svgrepo-com.svg</iconset>
+               </property>
+               <property name="iconSize">
+                <size>
+                 <width>30</width>
+                 <height>30</height>
+                </size>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QFrame" name="frm_simulate">
+            <property name="frameShape">
+             <enum>QFrame::StyledPanel</enum>
+            </property>
+            <property name="frameShadow">
+             <enum>QFrame::Raised</enum>
+            </property>
+            <layout class="QHBoxLayout" name="horizontalLayout_3" stretch="8,8,2">
+             <property name="spacing">
+              <number>1</number>
+             </property>
+             <property name="leftMargin">
+              <number>0</number>
+             </property>
+             <property name="topMargin">
+              <number>0</number>
+             </property>
+             <property name="rightMargin">
+              <number>0</number>
+             </property>
+             <property name="bottomMargin">
+              <number>0</number>
+             </property>
+             <item>
+              <widget class="QFrame" name="frm_simulate_camera">
+               <property name="frameShape">
+                <enum>QFrame::StyledPanel</enum>
+               </property>
+               <property name="frameShadow">
+                <enum>QFrame::Raised</enum>
+               </property>
+               <layout class="QVBoxLayout" name="verticalLayout_5" stretch="1,20">
+                <property name="spacing">
+                 <number>3</number>
+                </property>
+                <property name="leftMargin">
+                 <number>0</number>
+                </property>
+                <property name="topMargin">
+                 <number>0</number>
+                </property>
+                <property name="rightMargin">
+                 <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>0</number>
+                </property>
+                <item>
+                 <widget class="QLabel" name="lbl_simulate_camera">
+                  <property name="text">
+                   <string>LIVE CAMERA FEED</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QOpenGLWidget" name="opw_camera"/>
+                </item>
+               </layout>
+              </widget>
+             </item>
+             <item>
+              <widget class="QFrame" name="frm_simulate_motion">
+               <property name="frameShape">
+                <enum>QFrame::StyledPanel</enum>
+               </property>
+               <property name="frameShadow">
+                <enum>QFrame::Raised</enum>
+               </property>
+               <layout class="QVBoxLayout" name="verticalLayout_6" stretch="1,20">
+                <property name="spacing">
+                 <number>3</number>
+                </property>
+                <property name="leftMargin">
+                 <number>0</number>
+                </property>
+                <property name="topMargin">
+                 <number>0</number>
+                </property>
+                <property name="rightMargin">
+                 <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>0</number>
+                </property>
+                <item>
+                 <widget class="QLabel" name="lbl_simulate_motion">
+                  <property name="text">
+                   <string>3D MOTION &amp; POSITION</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QOpenGLWidget" name="opw_motion"/>
+                </item>
+               </layout>
+              </widget>
+             </item>
+             <item>
+              <widget class="QFrame" name="frm_simulate_control_depth_led">
+               <property name="frameShape">
+                <enum>QFrame::StyledPanel</enum>
+               </property>
+               <property name="frameShadow">
+                <enum>QFrame::Raised</enum>
+               </property>
+               <layout class="QVBoxLayout" name="verticalLayout_8">
+                <property name="leftMargin">
+                 <number>0</number>
+                </property>
+                <property name="topMargin">
+                 <number>0</number>
+                </property>
+                <property name="rightMargin">
+                 <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>0</number>
+                </property>
+                <item>
+                 <widget class="QFrame" name="frm_compass_depth">
+                  <property name="frameShape">
+                   <enum>QFrame::StyledPanel</enum>
+                  </property>
+                  <property name="frameShadow">
+                   <enum>QFrame::Raised</enum>
+                  </property>
+                  <layout class="QVBoxLayout" name="verticalLayout_9" stretch="2,9,2,6">
+                   <property name="spacing">
+                    <number>3</number>
+                   </property>
+                   <property name="leftMargin">
+                    <number>0</number>
+                   </property>
+                   <property name="topMargin">
+                    <number>0</number>
+                   </property>
+                   <property name="rightMargin">
+                    <number>0</number>
+                   </property>
+                   <property name="bottomMargin">
+                    <number>0</number>
+                   </property>
+                   <item>
+                    <widget class="QLabel" name="lbl_depth_pressure">
+                     <property name="text">
+                      <string>DEPTH &amp; PRESSURE</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QFrame" name="Hfrm_depth_pressure">
+                     <property name="frameShape">
+                      <enum>QFrame::StyledPanel</enum>
+                     </property>
+                     <property name="frameShadow">
+                      <enum>QFrame::Raised</enum>
+                     </property>
+                     <layout class="QHBoxLayout" name="horizontalLayout_10"/>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QLabel" name="lbl_view_compass">
+                     <property name="text">
+                      <string>COMPASS</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QFrame" name="frm_simulate_view_bottom">
+                     <property name="frameShape">
+                      <enum>QFrame::StyledPanel</enum>
+                     </property>
+                     <property name="frameShadow">
+                      <enum>QFrame::Raised</enum>
+                     </property>
+                     <layout class="QVBoxLayout" name="verticalLayout_12">
+                      <property name="leftMargin">
+                       <number>0</number>
+                      </property>
+                      <property name="topMargin">
+                       <number>0</number>
+                      </property>
+                      <property name="rightMargin">
+                       <number>0</number>
+                      </property>
+                      <property name="bottomMargin">
+                       <number>0</number>
+                      </property>
+                     </layout>
+                    </widget>
+                   </item>
+                  </layout>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QFrame" name="frm_control">
+            <property name="frameShape">
+             <enum>QFrame::StyledPanel</enum>
+            </property>
+            <property name="frameShadow">
+             <enum>QFrame::Raised</enum>
+            </property>
+            <layout class="QHBoxLayout" name="horizontalLayout_4" stretch="6,3,4">
+             <property name="spacing">
+              <number>3</number>
+             </property>
+             <property name="leftMargin">
+              <number>0</number>
+             </property>
+             <property name="topMargin">
+              <number>0</number>
+             </property>
+             <property name="rightMargin">
+              <number>0</number>
+             </property>
+             <property name="bottomMargin">
+              <number>0</number>
+             </property>
+             <item>
+              <widget class="QFrame" name="frm_telemetry_data">
+               <property name="frameShape">
+                <enum>QFrame::StyledPanel</enum>
+               </property>
+               <property name="frameShadow">
+                <enum>QFrame::Raised</enum>
+               </property>
+               <layout class="QVBoxLayout" name="verticalLayout_20">
+                <property name="spacing">
+                 <number>3</number>
+                </property>
+                <property name="leftMargin">
+                 <number>0</number>
+                </property>
+                <property name="topMargin">
+                 <number>0</number>
+                </property>
+                <property name="rightMargin">
+                 <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>0</number>
+                </property>
+                <item>
+                 <widget class="QLabel" name="lbl_telemetry_data">
+                  <property name="text">
+                   <string>TELEMETRY DATA</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QTableView" name="tabl_data"/>
+                </item>
+               </layout>
+              </widget>
+             </item>
+             <item>
+              <widget class="QFrame" name="frm_data_follow">
+               <property name="frameShape">
+                <enum>QFrame::StyledPanel</enum>
+               </property>
+               <property name="frameShadow">
+                <enum>QFrame::Raised</enum>
+               </property>
+               <layout class="QVBoxLayout" name="verticalLayout_14">
+                <property name="spacing">
+                 <number>3</number>
+                </property>
+                <property name="leftMargin">
+                 <number>0</number>
+                </property>
+                <property name="topMargin">
+                 <number>0</number>
+                </property>
+                <property name="rightMargin">
+                 <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>0</number>
+                </property>
+                <item>
+                 <widget class="QFrame" name="frm_power_sys">
+                  <property name="frameShape">
+                   <enum>QFrame::StyledPanel</enum>
+                  </property>
+                  <property name="frameShadow">
+                   <enum>QFrame::Raised</enum>
+                  </property>
+                  <layout class="QVBoxLayout" name="verticalLayout_19" stretch="1,11">
+                   <property name="spacing">
+                    <number>1</number>
+                   </property>
+                   <property name="leftMargin">
+                    <number>0</number>
+                   </property>
+                   <property name="topMargin">
+                    <number>0</number>
+                   </property>
+                   <property name="rightMargin">
+                    <number>0</number>
+                   </property>
+                   <property name="bottomMargin">
+                    <number>0</number>
+                   </property>
+                   <item>
+                    <widget class="QLabel" name="lbl_power_system">
+                     <property name="text">
+                      <string>POWER SYSTEMS</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QOpenGLWidget" name="ogl_powersys"/>
+                   </item>
+                  </layout>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
+             <item>
+              <widget class="QFrame" name="frm_control_right">
+               <property name="frameShape">
+                <enum>QFrame::StyledPanel</enum>
+               </property>
+               <property name="frameShadow">
+                <enum>QFrame::Raised</enum>
+               </property>
+               <layout class="QVBoxLayout" name="verticalLayout_4" stretch="1,8,3,3,3">
+                <property name="spacing">
+                 <number>1</number>
+                </property>
+                <property name="leftMargin">
+                 <number>0</number>
+                </property>
+                <property name="topMargin">
+                 <number>0</number>
+                </property>
+                <property name="rightMargin">
+                 <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>0</number>
+                </property>
+                <item>
+                 <widget class="QLabel" name="lbl_control_total">
+                  <property name="text">
+                   <string>ROV CONTROLS</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QFrame" name="frm_control_rov">
+                  <property name="frameShape">
+                   <enum>QFrame::StyledPanel</enum>
+                  </property>
+                  <property name="frameShadow">
+                   <enum>QFrame::Raised</enum>
+                  </property>
+                  <layout class="QHBoxLayout" name="horizontalLayout_8">
+                   <property name="leftMargin">
+                    <number>0</number>
+                   </property>
+                   <property name="topMargin">
+                    <number>0</number>
+                   </property>
+                   <property name="rightMargin">
+                    <number>0</number>
+                   </property>
+                   <property name="bottomMargin">
+                    <number>0</number>
+                   </property>
+                   <item>
+                    <widget class="QFrame" name="frm_control_rov_yaw">
+                     <property name="frameShape">
+                      <enum>QFrame::StyledPanel</enum>
+                     </property>
+                     <property name="frameShadow">
+                      <enum>QFrame::Raised</enum>
+                     </property>
+                     <layout class="QVBoxLayout" name="verticalLayout_13">
+                      <property name="leftMargin">
+                       <number>9</number>
+                      </property>
+                      <property name="topMargin">
+                       <number>0</number>
+                      </property>
+                      <property name="rightMargin">
+                       <number>9</number>
+                      </property>
+                      <property name="bottomMargin">
+                       <number>0</number>
+                      </property>
+                      <item>
+                       <widget class="QFrame" name="frm_control_rov_yaw_button">
+                        <property name="frameShape">
+                         <enum>QFrame::StyledPanel</enum>
+                        </property>
+                        <property name="frameShadow">
+                         <enum>QFrame::Raised</enum>
+                        </property>
+                        <layout class="QGridLayout" name="gridLayout">
+                         <property name="leftMargin">
+                          <number>0</number>
+                         </property>
+                         <property name="topMargin">
+                          <number>0</number>
+                         </property>
+                         <property name="rightMargin">
+                          <number>0</number>
+                         </property>
+                         <property name="bottomMargin">
+                          <number>0</number>
+                         </property>
+                         <property name="spacing">
+                          <number>9</number>
+                         </property>
+                         <item row="0" column="1">
+                          <spacer name="verticalSpacer_3">
+                           <property name="orientation">
+                            <enum>Qt::Vertical</enum>
+                           </property>
+                           <property name="sizeType">
+                            <enum>QSizePolicy::Fixed</enum>
+                           </property>
+                           <property name="sizeHint" stdset="0">
+                            <size>
+                             <width>20</width>
+                             <height>40</height>
+                            </size>
+                           </property>
+                          </spacer>
+                         </item>
+                         <item row="2" column="0">
+                          <widget class="QPushButton" name="pbtn_left">
+                           <property name="sizePolicy">
+                            <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+                             <horstretch>0</horstretch>
+                             <verstretch>0</verstretch>
+                            </sizepolicy>
+                           </property>
+                           <property name="contextMenuPolicy">
+                            <enum>Qt::DefaultContextMenu</enum>
+                           </property>
+                           <property name="text">
+                            <string>LEFT</string>
+                           </property>
+                           <property name="icon">
+                            <iconset resource="uis/arrow/arrows.qrc">
+                             <normaloff>:/arrows/arrow-left-svgrepo-com.svg</normaloff>:/arrows/arrow-left-svgrepo-com.svg</iconset>
+                           </property>
+                          </widget>
+                         </item>
+                         <item row="2" column="2">
+                          <widget class="QPushButton" name="pbtn_right">
+                           <property name="text">
+                            <string>RIGHT</string>
+                           </property>
+                           <property name="icon">
+                            <iconset resource="uis/arrow/arrows.qrc">
+                             <normaloff>:/arrows/arrow-right-svgrepo-com.svg</normaloff>:/arrows/arrow-right-svgrepo-com.svg</iconset>
+                           </property>
+                          </widget>
+                         </item>
+                         <item row="1" column="1">
+                          <widget class="QPushButton" name="pbtn_up">
+                           <property name="font">
+                            <font>
+                             <family>Rajdhani</family>
+                             <pointsize>-1</pointsize>
+                             <weight>75</weight>
+                             <bold>true</bold>
+                            </font>
+                           </property>
+                           <property name="layoutDirection">
+                            <enum>Qt::LeftToRight</enum>
+                           </property>
+                           <property name="text">
+                            <string>UP</string>
+                           </property>
+                           <property name="icon">
+                            <iconset resource="uis/arrow/arrows.qrc">
+                             <normaloff>:/arrows/arrow-up-svgrepo-com.svg</normaloff>:/arrows/arrow-up-svgrepo-com.svg</iconset>
+                           </property>
+                          </widget>
+                         </item>
+                         <item row="4" column="1">
+                          <spacer name="verticalSpacer_4">
+                           <property name="orientation">
+                            <enum>Qt::Vertical</enum>
+                           </property>
+                           <property name="sizeType">
+                            <enum>QSizePolicy::Fixed</enum>
+                           </property>
+                           <property name="sizeHint" stdset="0">
+                            <size>
+                             <width>20</width>
+                             <height>40</height>
+                            </size>
+                           </property>
+                          </spacer>
+                         </item>
+                         <item row="2" column="1">
+                          <widget class="QPushButton" name="pbtn_stop">
+                           <property name="text">
+                            <string>HOVER</string>
+                           </property>
+                           <property name="icon">
+                            <iconset resource="uis/arrow/arrows.qrc">
+                             <normaloff>:/arrows/crosshairs-svgrepo-com.svg</normaloff>:/arrows/crosshairs-svgrepo-com.svg</iconset>
+                           </property>
+                          </widget>
+                         </item>
+                         <item row="3" column="1">
+                          <widget class="QPushButton" name="pbtn_down">
+                           <property name="text">
+                            <string>DOWN</string>
+                           </property>
+                           <property name="icon">
+                            <iconset resource="uis/arrow/arrows.qrc">
+                             <normaloff>:/arrows/arrow-down-svgrepo-com.svg</normaloff>:/arrows/arrow-down-svgrepo-com.svg</iconset>
+                           </property>
+                          </widget>
+                         </item>
+                        </layout>
+                       </widget>
+                      </item>
+                     </layout>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QFrame" name="frm_control_rov_right_bottom">
+                     <property name="frameShape">
+                      <enum>QFrame::StyledPanel</enum>
+                     </property>
+                     <property name="frameShadow">
+                      <enum>QFrame::Raised</enum>
+                     </property>
+                     <layout class="QVBoxLayout" name="verticalLayout_16">
+                      <property name="leftMargin">
+                       <number>9</number>
+                      </property>
+                      <property name="topMargin">
+                       <number>0</number>
+                      </property>
+                      <property name="rightMargin">
+                       <number>9</number>
+                      </property>
+                      <property name="bottomMargin">
+                       <number>0</number>
+                      </property>
+                      <item>
+                       <spacer name="verticalSpacer">
+                        <property name="orientation">
+                         <enum>Qt::Vertical</enum>
+                        </property>
+                        <property name="sizeType">
+                         <enum>QSizePolicy::Fixed</enum>
+                        </property>
+                        <property name="sizeHint" stdset="0">
+                         <size>
+                          <width>20</width>
+                          <height>40</height>
+                         </size>
+                        </property>
+                       </spacer>
+                      </item>
+                      <item>
+                       <widget class="QPushButton" name="pbtn_control_depth_increase">
+                        <property name="text">
+                         <string> ASCEND</string>
+                        </property>
+                        <property name="icon">
+                         <iconset resource="uis/arrow/arrows.qrc">
+                          <normaloff>:/arrows/double-up-svgrepo-com.svg</normaloff>:/arrows/double-up-svgrepo-com.svg</iconset>
+                        </property>
+                       </widget>
+                      </item>
+                      <item>
+                       <widget class="QPushButton" name="pbtn_control_depth_decrease">
+                        <property name="text">
+                         <string>DESCEND</string>
+                        </property>
+                        <property name="icon">
+                         <iconset resource="uis/arrow/arrows.qrc">
+                          <normaloff>:/arrows/double-down-svgrepo-com.svg</normaloff>:/arrows/double-down-svgrepo-com.svg</iconset>
+                        </property>
+                       </widget>
+                      </item>
+                      <item>
+                       <widget class="QPushButton" name="pushButton">
+                        <property name="text">
+                         <string>   STOP </string>
+                        </property>
+                        <property name="icon">
+                         <iconset resource="uis/arrow/arrows.qrc">
+                          <normaloff>:/arrows/stop-svgrepo-com.svg</normaloff>:/arrows/stop-svgrepo-com.svg</iconset>
+                        </property>
+                       </widget>
+                      </item>
+                      <item>
+                       <spacer name="verticalSpacer_2">
+                        <property name="orientation">
+                         <enum>Qt::Vertical</enum>
+                        </property>
+                        <property name="sizeType">
+                         <enum>QSizePolicy::Fixed</enum>
+                        </property>
+                        <property name="sizeHint" stdset="0">
+                         <size>
+                          <width>20</width>
+                          <height>40</height>
+                         </size>
+                        </property>
+                       </spacer>
+                      </item>
+                     </layout>
+                    </widget>
+                   </item>
+                  </layout>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QFrame" name="frm_control_speed">
+                  <property name="frameShape">
+                   <enum>QFrame::StyledPanel</enum>
+                  </property>
+                  <property name="frameShadow">
+                   <enum>QFrame::Raised</enum>
+                  </property>
+                  <layout class="QHBoxLayout" name="horizontalLayout_6">
+                   <item>
+                    <widget class="QLabel" name="lbl_control_speed">
+                     <property name="text">
+                      <string>SPEED :</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QLabel" name="lbl_control_speed_number">
+                     <property name="text">
+                      <string>128</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QPushButton" name="pbtn_speed_increase">
+                     <property name="text">
+                      <string/>
+                     </property>
+                     <property name="icon">
+                      <iconset resource="uis/arrow/arrows.qrc">
+                       <normaloff>:/arrows/plus-svgrepo-com.svg</normaloff>:/arrows/plus-svgrepo-com.svg</iconset>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QPushButton" name="pbtn_speed_decrease">
+                     <property name="text">
+                      <string/>
+                     </property>
+                     <property name="icon">
+                      <iconset resource="uis/arrow/arrows.qrc">
+                       <normaloff>:/arrows/minus-svgrepo-com.svg</normaloff>:/arrows/minus-svgrepo-com.svg</iconset>
+                     </property>
+                    </widget>
+                   </item>
+                  </layout>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QFrame" name="frm_control_led">
+                  <property name="frameShape">
+                   <enum>QFrame::StyledPanel</enum>
+                  </property>
+                  <property name="frameShadow">
+                   <enum>QFrame::Raised</enum>
+                  </property>
+                  <layout class="QHBoxLayout" name="horizontalLayout_7">
+                   <item>
+                    <widget class="QPushButton" name="pbtn_led_onoff">
+                     <property name="text">
+                      <string/>
+                     </property>
+                     <property name="icon">
+                      <iconset resource="uis/arrow/arrows.qrc">
+                       <normaloff>:/icon/flashlight-svgrepo-com.svg</normaloff>:/icon/flashlight-svgrepo-com.svg</iconset>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QLabel" name="lbl_control_led_number">
+                     <property name="text">
+                      <string>100%</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QPushButton" name="pbtn_led_increase">
+                     <property name="text">
+                      <string/>
+                     </property>
+                     <property name="icon">
+                      <iconset resource="uis/arrow/arrows.qrc">
+                       <normaloff>:/arrows/plus-svgrepo-com.svg</normaloff>:/arrows/plus-svgrepo-com.svg</iconset>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QPushButton" name="pbtn_led_decrease">
+                     <property name="text">
+                      <string/>
+                     </property>
+                     <property name="icon">
+                      <iconset resource="uis/arrow/arrows.qrc">
+                       <normaloff>:/arrows/minus-svgrepo-com.svg</normaloff>:/arrows/minus-svgrepo-com.svg</iconset>
+                     </property>
+                    </widget>
+                   </item>
+                  </layout>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QFrame" name="Hfrm_control_action">
+                  <property name="frameShape">
+                   <enum>QFrame::StyledPanel</enum>
+                  </property>
+                  <property name="frameShadow">
+                   <enum>QFrame::Raised</enum>
+                  </property>
+                  <layout class="QHBoxLayout" name="horizontalLayout_11">
+                   <item>
+                    <widget class="QPushButton" name="pbtn_camera">
+                     <property name="text">
+                      <string>CAMERA</string>
+                     </property>
+                     <property name="icon">
+                      <iconset resource="uis/arrow/arrows.qrc">
+                       <normaloff>:/icon/camera-svgrepo-com.svg</normaloff>:/icon/camera-svgrepo-com.svg</iconset>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QPushButton" name="pushButton_3">
+                     <property name="text">
+                      <string>ARM</string>
+                     </property>
+                     <property name="icon">
+                      <iconset resource="uis/arrow/arrows.qrc">
+                       <normaloff>:/icon/robotic-arm-svgrepo-com.svg</normaloff>:/icon/robotic-arm-svgrepo-com.svg</iconset>
+                     </property>
+                    </widget>
+                   </item>
+                  </layout>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+ </widget>
+ <resources>
+  <include location="uis/arrow/arrows.qrc"/>
+ </resources>
+ <connections/>
+</ui>
