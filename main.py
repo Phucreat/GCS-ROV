@@ -369,7 +369,8 @@ class ROVMainWindow(QMainWindow):
         self._mav_worker.sig_vision_pose.connect(self._on_vision_pose)
         self._mav_worker.sig_named_float.connect(self._on_named_float)
         self._mav_worker.sig_cmd_ack.connect(self._on_cmd_ack)
-        self._mav_worker.sig_gps_raw.connect(self._on_gps_raw)
+        # sig_gps_raw da bi xoa: ROV duoi nuoc khong co GPS
+        # Vi tri tuyet doi = GCS_GPS (settings) + SLAM NED (xu ly trong geo_utils)
         self._mav_worker.start_worker()
 
         # SLAM UDP Receiver
@@ -522,18 +523,16 @@ class ROVMainWindow(QMainWindow):
         self._current = curr
 
     def _on_vision_pose(self, x, y, z, roll, pitch, yaw):
-        """Raw SLAM pose — vẽ quỹ đạo riêng nếu muốn."""
-        pass  # Có thể vẽ thêm trajectory riêng cho raw SLAM
+        """Raw SLAM pose — ve quy dao rieng neu muon."""
+        pass  # Co the ve them trajectory rieng cho raw SLAM
 
-    def _on_gps_raw(self, lat: float, lon: float):
-        """Tự động đồng bộ/hiệu chuẩn vị trí trạm GCS từ tín hiệu GPS thực của ROV."""
-        # Ngay khi ROV có GPS hoặc nhận tọa độ xuất phát từ Pixhawk
-        # Ta suy ngược vị trí trạm GCS bằng cách trừ đi dịch chuyển SLAM hiện tại
-        lat_offset = self._pos_ned[0] / 111111.0
-        lng_offset = self._pos_ned[1] / (111111.0 * math.cos(math.radians(lat)))
-        
-        self.settings["gcs_lat"] = lat - lat_offset
-        self.settings["gcs_lng"] = lon - lng_offset
+    # _on_gps_raw da bi XOA.
+    # ROV o duoi nuoc -> GPS vo dung.
+    # Vi tri GPS tuyet doi cua ROV tinh tu:
+    #   GCS_GPS (settings["gcs_lat"], settings["gcs_lng"])
+    #   + SLAM NED offset (self._pos_ned)
+    # Bang ham: utils.geo_utils.ned_to_gps()
+    # Xem _on_table_cell_clicked() va _compute_rov_gps()
 
     def _on_named_float(self, name: str, value: float):
         """Cập nhật bảng cảm biến ngoại vi."""
@@ -687,24 +686,57 @@ class ROVMainWindow(QMainWindow):
         # Kết nối sự kiện click ô để mở bản đồ
         table.cellClicked.connect(self._on_table_cell_clicked)
 
+    def _compute_rov_gps(self):
+        """
+        Tinh toa do GPS tuyet doi cua ROV.
+
+        Cong thuc:
+            ROV_GPS = GCS_GPS + SLAM_NED_offset
+
+        GCS_GPS: lat/lon cua tram dieu khien (may tinh tren bo)
+                 Lay tu settings["gcs_lat"] / settings["gcs_lng"]
+                 (nguoi dung nhap trong Settings hoac lay tu GPS may tinh)
+
+        SLAM_NED_offset: vi tri tuong doi cua ROV so voi goc toa do
+                         Lay tu LOCAL_POSITION_NED (self._pos_ned)
+                         Don vi: meters, he NED (North-East-Down)
+
+        Returns:
+            (rov_lat, rov_lon, depth_m, url)  hoac None neu chua co du lieu
+        """
+        from utils.geo_utils import rov_google_maps_url
+        gcs_lat = float(self.settings.get("gcs_lat", 0.0))
+        gcs_lng = float(self.settings.get("gcs_lng", 0.0))
+        if gcs_lat == 0.0 and gcs_lng == 0.0:
+            return None   # Chua cai dat GCS GPS
+        ned_x, ned_y, ned_z = (
+            self._pos_ned[0], self._pos_ned[1], self._pos_ned[2]
+        )
+        url, rov_lat, rov_lon, depth_m = rov_google_maps_url(
+            gcs_lat, gcs_lng, ned_x, ned_y, ned_z
+        )
+        return rov_lat, rov_lon, depth_m, url
+
     def _on_table_cell_clicked(self, row, column):
-        """Mở Google Maps trỏ đúng tọa độ ROV khi click vào hàng tương ứng."""
+        """Mo Google Maps tro dung toa do ROV khi click vao hang GPS Map Link."""
         table = self._telem_table
-        if table.item(row, 0) and table.item(row, 0).text() == "GPS Map Link":
-            gcs_lat = float(self.settings.get("gcs_lat", 21.0285))
-            gcs_lng = float(self.settings.get("gcs_lng", 105.8542))
-            
-            # Quy đổi hệ tọa độ NED (m) sang GPS Latitude/Longitude offset
-            # 1 độ vĩ độ = ~111,111 mét
-            lat_offset = self._pos_ned[0] / 111111.0
-            # 1 độ kinh độ = ~111,111 * cos(latitude) mét
-            lng_offset = self._pos_ned[1] / (111111.0 * math.cos(math.radians(gcs_lat)))
-            
-            rov_lat = gcs_lat + lat_offset
-            rov_lng = gcs_lng + lng_offset
-            
-            url = f"https://www.google.com/maps/search/?api=1&query={rov_lat},{rov_lng}"
-            QtGui.QDesktopServices.openUrl(QtCore.QUrl(url))
+        if not (table.item(row, 0)
+                and table.item(row, 0).text() == "GPS Map Link"):
+            return
+        result = self._compute_rov_gps()
+        if result is None:
+            QtWidgets.QMessageBox.warning(
+                self, "GCS GPS chua dat",
+                "Vui long nhap toa do GCS (lat/lon) trong Settings truoc."
+            )
+            return
+        rov_lat, rov_lon, depth_m, url = result
+        # Cap nhat gia tri hien thi trong bang
+        if table.item(row, 1):
+            table.item(row, 1).setText(
+                f"{rov_lat:.6f}, {rov_lon:.6f}  (depth={depth_m:.1f}m)"
+            )
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl(url))
 
     def _update_telemetry_table(self):
         """Cập nhật giá trị trong bảng telemetry."""
