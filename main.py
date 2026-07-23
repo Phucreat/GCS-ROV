@@ -70,6 +70,44 @@ try:
 except ImportError:
     HAS_INPUT = False
 
+# ── Feature 1: AR HUD + Video ────────────────────────────────────
+try:
+    from GUI.widgets.ar_hud_widget import ARHUDWidget
+    from network.video_receiver import VideoReceiver, VideoSource
+    HAS_VIDEO = True
+except ImportError:
+    HAS_VIDEO = False
+
+# ── Feature 2: AI Vision ──────────────────────────────────────────
+try:
+    from GUI.widgets.ai_vision_processor import AIVisionProcessor
+    from GUI.widgets.ai_control_panel import AIControlPanel
+    HAS_AI = True
+except ImportError:
+    HAS_AI = False
+
+# ── Feature 3: Mission Planner ────────────────────────────────────
+try:
+    from GUI.widgets.mission_planner import MissionPlanner
+    HAS_MISSION = True
+except ImportError:
+    HAS_MISSION = False
+
+# ── Feature 4: Seafloor Mesh ──────────────────────────────────────
+try:
+    from core.seafloor_mapper import SeafloorMapper
+    from GUI.widgets.seafloor_mesh_widget import SeafloorMeshWidget
+    HAS_SEAFLOOR = True
+except ImportError:
+    HAS_SEAFLOOR = False
+
+# ── Feature 5: Diagnostics Engine ────────────────────────────────
+try:
+    from core.diagnostics_engine import DiagnosticsEngine
+    HAS_DIAG = True
+except ImportError:
+    HAS_DIAG = False
+
 
 # ==============================================================
 # CÁC MODEL ROV HỖ TRỢ
@@ -140,10 +178,26 @@ class ROVMainWindow(QMainWindow):
         self._smoothed_ctrl = dict(surge=0., sway=0., heave=0., roll=0., pitch=0., yaw=0.)
         self._pressed_keys = set()
 
+        # ── Handles cho 5 features nâng cao ──
+        self._video_rx:    object = None
+        self._ar_hud:      object = None
+        self._ai_proc:     object = None
+        self._ai_panel:    object = None
+        self._mission_planner: object = None
+        self._seafloor_mapper: object = None
+        self._seafloor_mesh:   object = None
+        self._diagnostics: object = None
+        self._auto_track_gain: float = 0.3
+        # ── Camera / Recording ──
+        self._is_recording:   bool  = False
+        self._video_writer:   object = None   # cv2.VideoWriter
+        self._last_frame:     object = None   # np.ndarray, cập nhật mỗi frame
+
         # --- Thay thế placeholder widgets ---
         self._inject_3d_widget()
         self._inject_power_widget()
         self._inject_slam_radar()
+        self._inject_advanced_features()  # ← 5 features nâng cao
 
         # --- Kết nối signal/slot của UI gốc ---
         # Chặn signal trước để tránh currentTextChanged bắn sớm
@@ -215,6 +269,235 @@ class ROVMainWindow(QMainWindow):
 
         self.compass_3d = GLCompass3DWidget(parent=parent)
         layout.addWidget(self.compass_3d)
+
+        # ── Feature 4: Seafloor Mesh (song song với compass) ──
+        if HAS_SEAFLOOR:
+            self._seafloor_mesh = SeafloorMeshWidget(parent=parent)
+            layout.addWidget(self._seafloor_mesh)
+            # Splitter để resize 2 widget
+            layout.setStretch(0, 1)  # compass_3d
+            layout.setStretch(1, 1)  # seafloor_mesh
+
+    def _inject_advanced_features(self):
+        """
+        Khởi tạo và kết nối 5 tính năng nâng cao.
+        Được gọi sau _inject_slam_radar().
+        """
+        # ── Feature 5: Diagnostics Engine ────────────────────────
+        if HAS_DIAG:
+            self._diagnostics = DiagnosticsEngine(
+                capacity_ah=float(self.settings.get('battery_capacity_ah', 15.6))
+            )
+            self._diagnostics.sig_alert.connect(self._on_diagnostic_alert)
+            self._diagnostics.sig_dive_time.connect(self._on_dive_time_update)
+
+        # ── Feature 4: Seafloor Mapper ───────────────────────────
+        if HAS_SEAFLOOR:
+            self._seafloor_mapper = SeafloorMapper(
+                grid_resolution=0.5,
+                max_points=5000,
+                grid_size_m=50.0
+            )
+            if self._seafloor_mesh:
+                self._seafloor_mapper.sig_mesh_updated.connect(
+                    self._on_seafloor_mesh_updated
+                )
+
+        # ── Feature 3: Mission Planner ───────────────────────────
+        if HAS_MISSION:
+            # Tạo dock widget bên cạnh hoặc tab
+            self._mission_planner = MissionPlanner(parent=None)
+            self._mission_planner.setWindowTitle("Mission Planner")
+            self._mission_planner.setWindowFlags(
+                self._mission_planner.windowFlags() |
+                QtCore.Qt.WindowType.Window
+            )
+            # Kết nối signal waypoint từ 3D widget
+            if hasattr(self.gl_3d, 'sig_waypoint_placed'):
+                self.gl_3d.sig_waypoint_placed.connect(
+                    self._mission_planner.add_waypoint_from_3d
+                )
+            # Preview waypoint trong 3D viewer
+            self._mission_planner.sig_preview_waypoint.connect(
+                lambda x, y, z: self.gl_3d.update_trajectory(x, y, z)
+            )
+            # Thêm nút mở Mission Planner vào toolbar (nếu có)
+            if hasattr(self.ui, 'setup_systeam'):
+                btn_mp = QtWidgets.QPushButton("📍 Mission", self)
+                btn_mp.setStyleSheet(
+                    "QPushButton{background:#0D1726;color:#00A8FF;"
+                    "border:1px solid #1E3550;border-radius:4px;padding:3px 8px;}"
+                    "QPushButton:hover{border-color:#00A8FF;}"
+                )
+                btn_mp.clicked.connect(self._mission_planner.show)
+                # Chèn vào layout header nếu có
+                hdr_layout = self.ui.setup_systeam.parentWidget().layout()
+                if hdr_layout:
+                    idx = hdr_layout.indexOf(self.ui.setup_systeam)
+                    hdr_layout.insertWidget(idx, btn_mp)
+
+        # ── Feature 1 & 2: Video Receiver + AR HUD + AI ──────────
+        if HAS_VIDEO:
+            self._setup_video_pipeline()
+
+    def _setup_video_pipeline(self):
+        """Khởi tạo video pipeline: VideoReceiver → ARHUDWidget → AIVisionProcessor."""
+        src          = self.settings.get('video_source', 'udp_h264')
+        udp_port     = int(self.settings.get('udp_video_port', 5620))
+        rtsp_url     = self.settings.get('rtsp_url', 'rtsp://192.168.2.2:8554/video')
+        webcam_idx   = int(self.settings.get('webcam_index', 0))
+        vid_file     = self.settings.get('video_file', '')
+        fps          = int(self.settings.get('video_fps', 30))
+        res_str      = self.settings.get('video_resolution', '640x480')
+        res_parts    = res_str.split('x')
+        target_w, target_h = (int(res_parts[0]), int(res_parts[1])) if len(res_parts)==2 else (640, 480)
+
+        # Tạo VideoReceiver theo nguồn
+        if src == 'udp_h264':
+            self._video_rx = VideoReceiver(
+                source_type=VideoSource.UDP_H264,
+                url_or_index=udp_port,
+                target_fps=fps, target_w=target_w, target_h=target_h
+            )
+        elif src == 'webcam':
+            self._video_rx = VideoReceiver(
+                source_type=VideoSource.WEBCAM,
+                url_or_index=webcam_idx,
+                target_fps=fps, target_w=target_w, target_h=target_h
+            )
+        elif src == 'file':
+            self._video_rx = VideoReceiver(
+                source_type=VideoSource.FILE,
+                url_or_index=vid_file,
+                target_fps=fps, target_w=target_w, target_h=target_h
+            )
+        else:  # rtsp
+            self._video_rx = VideoReceiver(
+                source_type=VideoSource.RTSP,
+                url_or_index=rtsp_url,
+                target_fps=fps, target_w=target_w, target_h=target_h
+            )
+
+        # Tạo AR HUD Widget — cửa sổ nổi
+        self._ar_hud = ARHUDWidget(parent=None)
+        self._ar_hud.setWindowTitle("📹 Live Video + AR HUD")
+        self._ar_hud.resize(target_w + 20, target_h + 60)
+        self._ar_hud.set_hud_enabled(
+            self.settings.get('ar_hud_enabled', True)
+        )
+
+        # Kết nối video → HUD + cập nhật frame cười
+        def _on_frame_received(frame):
+            import numpy as _np
+            self._last_frame = frame.copy()
+            self._ar_hud.set_frame(frame)
+            # Ghi video nếu đang recording
+            if self._is_recording and self._video_writer is not None:
+                try:
+                    self._video_writer.write(frame)
+                except Exception:
+                    pass
+
+        self._video_rx.sig_frame.connect(_on_frame_received)
+        self._video_rx.sig_connected.connect(
+            lambda ok: print(f"[Video] {'Connected' if ok else 'Disconnected'}")
+        )
+        self._video_rx.sig_error.connect(
+            lambda e: print(f"[Video] Error: {e}")
+        )
+
+        # AI Vision Processor (Feature 2)
+        if HAS_AI and self.settings.get('ai_detection_enabled', False):
+            self._setup_ai_pipeline()
+
+        # Thêm nút mở Video Window vào header
+        if hasattr(self.ui, 'setup_systeam'):
+            btn_vid = QtWidgets.QPushButton("📹 Video", self)
+            btn_vid.setStyleSheet(
+                "QPushButton{background:#0D1726;color:#00FF66;"
+                "border:1px solid #1E3550;border-radius:4px;padding:3px 8px;}"
+                "QPushButton:hover{border-color:#00FF66;}"
+            )
+            btn_vid.clicked.connect(self._ar_hud.show)
+            hdr_layout = self.ui.setup_systeam.parentWidget().layout()
+            if hdr_layout:
+                idx = hdr_layout.indexOf(self.ui.setup_systeam)
+                hdr_layout.insertWidget(idx, btn_vid)
+
+        self._video_rx.start()
+
+    def _setup_ai_pipeline(self):
+        """Khởi tạo AI detection processor và control panel."""
+        if not HAS_AI:
+            return
+        model_path = self.settings.get('ai_model_path', 'yolov8n.pt')
+        self._ai_proc = AIVisionProcessor(
+            model_path=model_path,
+            conf=float(self.settings.get('ai_confidence', 0.5)),
+            device='cpu'
+        )
+        # Kết nối: video frame → AI processor
+        if self._video_rx:
+            self._video_rx.sig_frame.connect(self._ai_proc.submit_frame)
+        # Kết nối: detections → AR HUD
+        if self._ar_hud:
+            self._ai_proc.sig_detections.connect(self._ar_hud.set_detections)
+        # Kết nối: track error → MAVLink yaw/pitch offset
+        self._ai_proc.sig_track_error.connect(self._on_track_error)
+        # AI control panel (cửa sổ nổi)
+        self._ai_panel = AIControlPanel(parent=None)
+        self._ai_panel.setWindowTitle("🤖 AI Vision Control")
+        self._ai_panel.sig_detection_enabled.connect(self._on_ai_detection_toggle)
+        self._ai_panel.sig_model_changed.connect(self._ai_proc.set_model_path if hasattr(self._ai_proc, 'set_model_path') else lambda x: None)
+        self._ai_panel.sig_confidence_changed.connect(self._ai_proc.set_confidence)
+        self._ai_panel.sig_auto_track_enabled.connect(self._ai_proc.set_auto_track)
+        self._ai_panel.sig_track_class_changed.connect(self._ai_proc.set_tracking_target)
+        self._ai_panel.sig_track_gain_changed.connect(
+            lambda g: setattr(self, '_auto_track_gain', g)
+        )
+        self._ai_proc.sig_fps.connect(
+            lambda fps: self._ai_panel.update_stats(fps, 0, -1)
+        )
+        self._ai_proc.start()
+
+    # ── Diagnostic Alert Handler ──────────────────────────────────
+    def _on_diagnostic_alert(self, level: str, message: str):
+        """Nhận cảnh báo từ DiagnosticsEngine → hiển thị trong PowerWidget."""
+        self.power_widget.add_alert(level, message)
+        # CRITICAL: cũng hiển thị trên AR HUD nếu đang mở
+        if self._ar_hud and level == 'CRITICAL':
+            self._ar_hud.set_warning(message, level)
+
+    def _on_dive_time_update(self, minutes: float):
+        """Nhận dive time từ DiagnosticsEngine → hiển thị trong PowerWidget."""
+        self.power_widget.set_dive_time(minutes)
+
+    # ── Seafloor Mesh Handler ─────────────────────────────────────
+    def _on_seafloor_mesh_updated(self):
+        """Cập nhật OpenGL mesh khi SeafloorMapper có dữ liệu mới."""
+        if self._seafloor_mapper and self._seafloor_mesh:
+            verts, colors, tris = self._seafloor_mapper.get_mesh()
+            self._seafloor_mesh.on_mesh_updated(verts, colors, tris)
+
+    # ── AI Track Error → MAVLink ──────────────────────────────────
+    def _on_track_error(self, dx: float, dy: float):
+        """
+        Nhận độ lệch tâm từ AI tracker → bù vào yaw/pitch.
+        dx, dy: -1.0 đến +1.0 (normalized offset)
+        """
+        if not self._connected:
+            return
+        gain = self._auto_track_gain
+        self._ctrl['yaw']   = max(-1.0, min(1.0, dx * gain))
+        self._ctrl['pitch'] = max(-1.0, min(1.0, dy * gain))
+        self._send_mavlink_control()
+
+    def _on_ai_detection_toggle(self, enabled: bool):
+        if self._ai_proc:
+            if enabled:
+                self._ai_proc.start() if not self._ai_proc.isRunning() else None
+            else:
+                self._ai_proc.stop()
 
     def _inject_telemetry_table(self):
         """
@@ -293,6 +576,7 @@ class ROVMainWindow(QMainWindow):
         self.ui.pbtn_led_decrease.clicked.connect(
             lambda: self._mav_lights(False))
         self.ui.pushButton_3.clicked.connect(self._toggle_arm)  # ARM button
+        self.ui.pbtn_camera.clicked.connect(self._on_camera_button)  # Camera/Record
 
     # ----------------------------------------------------------
     # KHỞI TẠO MODEL ROV
@@ -354,7 +638,7 @@ class ROVMainWindow(QMainWindow):
     # KHỞI ĐỘNG THREADS
     # ----------------------------------------------------------
     def _start_workers(self):
-        """Khởi động MAVLink và SLAM UDP receiver threads."""
+        """Khởi động MAVLink, SLAM UDP receiver, và Video threads."""
         # MAVLink Worker
         conn = self.settings.get("connection", "udp:0.0.0.0:14550")
         self._mav_worker = MAVLinkWorker(connection_string=conn)
@@ -369,8 +653,6 @@ class ROVMainWindow(QMainWindow):
         self._mav_worker.sig_vision_pose.connect(self._on_vision_pose)
         self._mav_worker.sig_named_float.connect(self._on_named_float)
         self._mav_worker.sig_cmd_ack.connect(self._on_cmd_ack)
-        # sig_gps_raw da bi xoa: ROV duoi nuoc khong co GPS
-        # Vi tri tuyet doi = GCS_GPS (settings) + SLAM NED (xu ly trong geo_utils)
         self._mav_worker.start_worker()
 
         # SLAM UDP Receiver
@@ -384,6 +666,11 @@ class ROVMainWindow(QMainWindow):
             self._mav_worker.stop_worker()
         if self._slam_worker:
             self._slam_worker.stop_worker()
+        # Dừng video + AI
+        if self._video_rx:
+            self._video_rx.stop()
+        if self._ai_proc and hasattr(self._ai_proc, 'stop'):
+            self._ai_proc.stop()
 
     # ----------------------------------------------------------
     # VÒNG LẶP CHÍNH 60 FPS
@@ -521,6 +808,12 @@ class ROVMainWindow(QMainWindow):
     def _on_sys_status(self, volt: float, curr: float, remain: int):
         self._voltage = volt
         self._current = curr
+        # ── Feature 5: Diagnostics ────────────────────────────────
+        if self._diagnostics:
+            self._diagnostics.on_sys_status(volt, curr, remain)
+            # Truyền throttle hiện tại vào diagnostics
+            throttle_norm = abs(self._ctrl.get('surge', 0.0))
+            self._diagnostics.on_throttle(throttle_norm)
 
     def _on_vision_pose(self, x, y, z, roll, pitch, yaw):
         """Raw SLAM pose — ve quy dao rieng neu muon."""
@@ -538,6 +831,9 @@ class ROVMainWindow(QMainWindow):
         """Cập nhật bảng cảm biến ngoại vi."""
         self._named_sensors[name] = value
         self._update_telemetry_named(name, value)
+        # ── Feature 5: Diagnostics — nhiệt độ nước ───────────────
+        if self._diagnostics and name == 'TEMP':
+            self._diagnostics.on_water_temp(value)
 
     def _on_cmd_ack(self, command: int, result: int):
         result_str = {0: "OK", 1: "FAILED", 4: "DENIED"}.get(result, str(result))
@@ -547,6 +843,34 @@ class ROVMainWindow(QMainWindow):
         """Nhận point cloud từ SLAM UDP thread."""
         self.gl_3d.update_slam_points(pts)
         self.compass_3d.update_slam_points(pts)
+        # ── Feature 4: Seafloor Mapper ────────────────────────────
+        if self._seafloor_mapper and len(pts) > 0:
+            self._seafloor_mapper.add_slam_scan(
+                points_ned=pts,
+                rov_depth_m=float(self._depth),
+                rov_pos_ned=self._pos_ned
+            )
+            # Cập nhật vị trí ROV trên mesh widget
+            if self._seafloor_mesh:
+                self._seafloor_mesh.set_rov_position(
+                    self._pos_ned[0], self._pos_ned[1], self._depth
+                )
+        # ── Feature 1: Update AR HUD telemetry ───────────────────
+        if self._ar_hud:
+            self._ar_hud.update_telemetry(
+                roll     = self._roll,
+                pitch    = self._pitch,
+                yaw      = self._yaw,
+                depth    = self._depth,
+                heading  = self._heading,
+                speed    = float(np.linalg.norm(self._vel_ned)),
+                voltage  = self._voltage,
+                current  = self._current,
+                pct      = int(self._current),
+                signal_pct = self._link_quality,
+                mode     = self._flight_mode,
+                armed    = 'ARMED' in self._sys_status.upper()
+            )
 
     # ----------------------------------------------------------
     # CONTROL
@@ -597,8 +921,98 @@ class ROVMainWindow(QMainWindow):
     def _toggle_arm(self):
         """ARM/DISARM toggle."""
         if self._mav_worker and self._connected:
-            # TODO: track armed state
             self._mav_worker.send_arm(True)
+
+    # ── Camera Snapshot / Record ───────────────────────────────────────
+    def _get_media_dir(self) -> str:
+        """Trả về đường dẫn thư mục lưu media, tạo nếu chưa tồn tại."""
+        path = self.settings.get('media_save_path', '').strip()
+        if not path:
+            path = os.path.join(PROJECT_ROOT, 'media')
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def _on_camera_button(self):
+        """
+        Single-click: chụp ảnh snapshot vào thư mục media.
+        Double-click (click khi đang recording): dừng recording.
+        Logic:
+          - Nếu không recording: chụp snapshot và hỏi có muốn bắt đầu record không.
+          - Nếu đang recording: dừng và lưu file video.
+        """
+        if self._is_recording:
+            self._stop_recording()
+        else:
+            # Đầu tiên chụp snapshot
+            self._take_snapshot()
+
+    def _take_snapshot(self):
+        """Chụp ảnh từ frame hiện tại và lưu file PNG."""
+        if self._last_frame is None:
+            QtWidgets.QMessageBox.warning(
+                self, "Không có video",
+                "Chưa có luồng video. Kiểm tra kết nối camera và mở cửa sổ Video."
+            )
+            return
+        try:
+            import cv2
+            import time as _t
+            ts   = _t.strftime("%Y%m%d_%H%M%S")
+            path = os.path.join(self._get_media_dir(), f"snap_{ts}.png")
+            cv2.imwrite(path, self._last_frame)
+            print(f"[Camera] Snapshot saved: {path}")
+            # Hiển thị thông báo nhỏ
+            self.ui.pbtn_camera.setToolTip(f"Snapshot: {os.path.basename(path)}")
+            # Hỏi có muốn bắt đầu ghi video không
+            reply = QtWidgets.QMessageBox.question(
+                self, "📸 Snapshot đã lưu",
+                f"Snapshot: {path}\n\nBat dau ghi video khong?",
+                QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+                QtWidgets.QMessageBox.StandardButton.No
+            )
+            if reply == QtWidgets.QMessageBox.StandardButton.Yes:
+                self._start_recording()
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Lỗi Snapshot", str(e))
+
+    def _start_recording(self):
+        """Bắt đầu ghi video vào file MP4."""
+        if self._last_frame is None:
+            return
+        try:
+            import cv2, time as _t
+            ts   = _t.strftime("%Y%m%d_%H%M%S")
+            path = os.path.join(self._get_media_dir(), f"rec_{ts}.mp4")
+            h, w = self._last_frame.shape[:2]
+            fps  = int(self.settings.get('video_fps', 30))
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            self._video_writer = cv2.VideoWriter(path, fourcc, fps, (w, h))
+            self._is_recording = True
+            # Thay đổi icon/style nút
+            self.ui.pbtn_camera.setStyleSheet(
+                "QPushButton { border: 2px solid #FF4040; color: #FF4040; "
+                "background: rgba(255,0,0,0.1); border-radius:4px; }"
+            )
+            self.ui.pbtn_camera.setToolTip(f"Recording... Click để dừng. File: {os.path.basename(path)}")
+            print(f"[Camera] Recording started: {path}")
+        except Exception as e:
+            self._is_recording = False
+            QtWidgets.QMessageBox.critical(self, "Lỗi Recording", str(e))
+
+    def _stop_recording(self):
+        """Dừng ghi video và lưu file."""
+        self._is_recording = False
+        if self._video_writer is not None:
+            self._video_writer.release()
+            self._video_writer = None
+        # Khôi phục style nút
+        self.ui.pbtn_camera.setStyleSheet("")
+        self.ui.pbtn_camera.setToolTip("Chụp ảnh / Ghi video")
+        print("[Camera] Recording stopped.")
+        QtWidgets.QMessageBox.information(
+            self, "📹 Recording dừng",
+            f"Video đã lưu vào thư mục:\n{self._get_media_dir()}"
+        )
 
     # ----------------------------------------------------------
     # SETTINGS DIALOG
@@ -688,27 +1102,14 @@ class ROVMainWindow(QMainWindow):
 
     def _compute_rov_gps(self):
         """
-        Tinh toa do GPS tuyet doi cua ROV.
-
-        Cong thuc:
-            ROV_GPS = GCS_GPS + SLAM_NED_offset
-
-        GCS_GPS: lat/lon cua tram dieu khien (may tinh tren bo)
-                 Lay tu settings["gcs_lat"] / settings["gcs_lng"]
-                 (nguoi dung nhap trong Settings hoac lay tu GPS may tinh)
-
-        SLAM_NED_offset: vi tri tuong doi cua ROV so voi goc toa do
-                         Lay tu LOCAL_POSITION_NED (self._pos_ned)
-                         Don vi: meters, he NED (North-East-Down)
-
-        Returns:
-            (rov_lat, rov_lon, depth_m, url)  hoac None neu chua co du lieu
+        Tính toạ độ GPS tuyệt đối của ROV.
+        ROV_GPS = GCS_GPS + SLAM_NED_offset
         """
         from utils.geo_utils import rov_google_maps_url
         gcs_lat = float(self.settings.get("gcs_lat", 0.0))
         gcs_lng = float(self.settings.get("gcs_lng", 0.0))
         if gcs_lat == 0.0 and gcs_lng == 0.0:
-            return None   # Chua cai dat GCS GPS
+            return None   # Chưa cài đặt GCS GPS
         ned_x, ned_y, ned_z = (
             self._pos_ned[0], self._pos_ned[1], self._pos_ned[2]
         )
@@ -962,8 +1363,19 @@ def main():
         "blackbox_path": "logs",
         "csv_log_path":  "logs/rov_activity.csv",
         "mock_mode":     args.mock,
-        "gcs_lat":       21.0285,
-        "gcs_lng":       105.8542,
+        # GCS location — BUộC nhập trong Settings → General
+        # (dùng "📍 Lấy vị trí hiện tại" hoặc Google Maps cần sao chép thủ công)
+        "gcs_lat":       0.0,
+        "gcs_lng":       0.0,
+        # Video
+        "video_source":  "udp_h264",
+        "udp_video_port": 5620,
+        "rtsp_url":      "rtsp://192.168.2.2:8554/video",
+        "video_fps":     30,
+        "video_resolution": "640x480",
+        "ar_hud_enabled": True,
+        "media_save_path": os.path.join(PROJECT_ROOT, "media"),
+        # Controls
         "key_forward":   "W",
         "key_backward":  "S",
         "key_left":      "A",

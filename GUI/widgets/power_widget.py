@@ -51,6 +51,7 @@ class PowerWidget(QtWidgets.QWidget):
     BAT_CRIT_PCT  = 15
 
     HISTORY_LEN   = 120   # ~2 phút với 1Hz
+    MAX_ALERTS    = 6     # Số cảnh báo tối đa hiển thị
 
     def __init__(self, parent=None, n_thrusters: int = 6):
         super().__init__(parent)
@@ -59,15 +60,21 @@ class PowerWidget(QtWidgets.QWidget):
         self._current        = 0.0
         self._remaining_pct  = 100
         self._thruster_loads = [0.0] * n_thrusters
-        self._volt_history   = deque([16.8] * self.HISTORY_LEN,
-                                     maxlen=self.HISTORY_LEN)
-        self._curr_history   = deque([0.0] * self.HISTORY_LEN,
-                                     maxlen=self.HISTORY_LEN)
-        self.setMinimumHeight(100)
+        self._volt_history   = deque([16.8] * self.HISTORY_LEN, maxlen=self.HISTORY_LEN)
+        self._curr_history   = deque([0.0]  * self.HISTORY_LEN, maxlen=self.HISTORY_LEN)
+        # Alerts: deque of (level, message, timestamp)
+        self._alerts: deque  = deque(maxlen=self.MAX_ALERTS)
+        self._dive_time_min: float = -1.0   # -1 = chưa tính được
+        self._blink_phase   = True          # cho hiệu ứng nhấp nháy CRITICAL
+        self.setMinimumHeight(120)
         self.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Expanding,
             QtWidgets.QSizePolicy.Policy.Expanding
         )
+        # Timer nhấp nháy cho CRITICAL alerts
+        self._blink_timer = QtCore.QTimer(self)
+        self._blink_timer.timeout.connect(self._on_blink)
+        self._blink_timer.start(600)
 
     # --------------------------------------------------------
     # API
@@ -79,7 +86,6 @@ class PowerWidget(QtWidgets.QWidget):
         if remaining_pct >= 0:
             self._remaining_pct = remaining_pct
         else:
-            # Ước tính từ điện áp (2S–4S LiPo)
             self._remaining_pct = self._estimate_pct(voltage_v)
         self._volt_history.append(voltage_v)
         self._curr_history.append(current_a)
@@ -88,7 +94,6 @@ class PowerWidget(QtWidgets.QWidget):
     def set_thruster_loads(self, loads: list):
         """loads: list float 0.0–1.0 cho mỗi thruster."""
         self._thruster_loads = list(loads[:self._n_thrusters])
-        # Pad nếu thiếu
         while len(self._thruster_loads) < self._n_thrusters:
             self._thruster_loads.append(0.0)
         self.update()
@@ -97,6 +102,31 @@ class PowerWidget(QtWidgets.QWidget):
         self._n_thrusters = n
         self._thruster_loads = [0.0] * n
         self.update()
+
+    def add_alert(self, level: str, message: str):
+        """
+        Thêm cảnh báo mới vào panel.
+        level: 'INFO' | 'WARN' | 'CRITICAL'
+        """
+        import time as _time
+        ts = _time.strftime("%H:%M:%S")
+        self._alerts.appendleft((level.upper(), message, ts))
+        self.update()
+
+    def set_dive_time(self, minutes: float):
+        """Cập nhật thời gian lặn còn lại (phút). -1 = chưa xác định."""
+        self._dive_time_min = minutes
+        self.update()
+
+    def clear_alerts(self):
+        self._alerts.clear()
+        self.update()
+
+    def _on_blink(self):
+        self._blink_phase = not self._blink_phase
+        # Chỉ redraw nếu có CRITICAL alert
+        if any(a[0] == 'CRITICAL' for a in self._alerts):
+            self.update()
 
     # --------------------------------------------------------
     # VẼ
@@ -109,14 +139,18 @@ class PowerWidget(QtWidgets.QWidget):
         # Nền
         p.fillRect(0, 0, w, h, self.COLOR_BG)
 
-        # Chia layout
-        top_h    = int(h * 0.35)
-        mid_h    = int(h * 0.35)
-        chart_h  = h - top_h - mid_h
+        # Chia layout: gauges | thrusters | chart | dive_timer | alerts
+        top_h    = int(h * 0.28)
+        mid_h    = int(h * 0.25)
+        chart_h  = int(h * 0.20)
+        timer_h  = int(h * 0.09)
+        alerts_h = h - top_h - mid_h - chart_h - timer_h
 
         self._draw_top_gauges(p, 0, 0, w, top_h)
         self._draw_thruster_bars(p, 0, top_h, w, mid_h)
         self._draw_voltage_chart(p, 0, top_h + mid_h, w, chart_h)
+        self._draw_dive_timer(p, 0, top_h + mid_h + chart_h, w, timer_h)
+        self._draw_alerts(p, 0, top_h + mid_h + chart_h + timer_h, w, alerts_h)
 
         p.end()
 
@@ -301,3 +335,65 @@ class PowerWidget(QtWidgets.QWidget):
                       v_min: float = 14.0, v_max: float = 16.8) -> int:
         pct = (voltage - v_min) / (v_max - v_min) * 100
         return max(0, min(100, int(pct)))
+
+    def _draw_dive_timer(self, p, x, y, w, h):
+        """Hiển thị đồng hồ đếm ngược thời gian lặn còn lại."""
+        if h < 12:
+            return
+        pad = 6
+        # Đường kẻ ngăn cách
+        p.setPen(QtGui.QPen(self.COLOR_BORDER, 1))
+        p.drawLine(x + pad, y, x + w - pad, y)
+
+        if self._dive_time_min < 0:
+            time_str = "DIVE TIME: Calculating..."
+            color = self.COLOR_LABEL
+        else:
+            mins = int(self._dive_time_min)
+            secs = int((self._dive_time_min - mins) * 60)
+            time_str = f"DIVE TIME REMAINING: {mins:02d}:{secs:02d}"
+            if self._dive_time_min < 5:
+                color = self.COLOR_RED if self._blink_phase else QtGui.QColor(80, 20, 20)
+            elif self._dive_time_min < 15:
+                color = self.COLOR_YELLOW
+            else:
+                color = self.COLOR_GREEN
+
+        p.setPen(color)
+        p.setFont(QtGui.QFont("Rajdhani", 8, QtGui.QFont.Weight.Bold))
+        p.drawText(x + pad, y + h - 3, time_str)
+
+    def _draw_alerts(self, p, x, y, w, h):
+        """Vẽ panel cảnh báo cuộn (tối đa MAX_ALERTS dòng)."""
+        if h < 14 or not self._alerts:
+            return
+        pad  = 6
+        line_h = max(13, h // (self.MAX_ALERTS + 1))
+
+        # Header
+        p.setPen(QtGui.QPen(self.COLOR_BORDER, 1))
+        p.drawLine(x + pad, y, x + w - pad, y)
+        p.setPen(self.COLOR_LABEL)
+        p.setFont(QtGui.QFont("Rajdhani", 7, QtGui.QFont.Weight.Bold))
+        p.drawText(x + pad, y + 11, "SYSTEM ALERTS")
+
+        LEVEL_COLOR = {
+            'INFO':     self.COLOR_CYAN,
+            'WARN':     self.COLOR_YELLOW,
+            'CRITICAL': self.COLOR_RED if self._blink_phase else QtGui.QColor(100, 30, 30),
+        }
+        for i, (lvl, msg, ts) in enumerate(self._alerts):
+            ry = y + 14 + i * line_h
+            if ry + line_h > y + h:
+                break
+            color = LEVEL_COLOR.get(lvl, self.COLOR_TEXT)
+            # Badge level
+            badge_w = 42
+            p.fillRect(x + pad, ry + 1, badge_w, line_h - 2, QtGui.QColor(color.red(), color.green(), color.blue(), 30))
+            p.setPen(color)
+            p.setFont(QtGui.QFont("Rajdhani", 7, QtGui.QFont.Weight.Bold))
+            p.drawText(x + pad + 2, ry + line_h - 3, f"{lvl[:4]}")
+            # Message
+            p.setPen(self.COLOR_TEXT)
+            p.setFont(QtGui.QFont("Rajdhani", 7))
+            p.drawText(x + pad + badge_w + 4, ry + line_h - 3, f"{ts} {msg}")

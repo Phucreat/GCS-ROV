@@ -112,20 +112,29 @@ def bearing_deg(
     return b % 360.0
 
 
-def google_maps_url(lat: float, lon: float, zoom: int = 17) -> str:
+def google_maps_url(lat: float, lon: float, zoom: int = 18) -> str:
     """
-    Tao URL Google Maps cho toa do cho truoc.
+    Tạo URL Google Maps với pin chính xác tại toạ độ cho trước.
+
+    Sử dụng format place/?q=lat,lon thay vì search/?query= để:
+      - Hiển thị pin đỏ chính xác tại vị trí ROV
+      - Không bị redirect về vị trí xấp xỉ
 
     Args:
-        lat  : vi do
-        lon  : kinh do
-        zoom : muc zoom ban do (1-21, mac dinh 17 = pho/khu vuc)
+        lat  : vĩ độ
+        lon  : kinh độ
+        zoom : mức zoom bản đồ (1-21, mặc định 18 = rất gần)
 
     Returns:
-        URL string mo tren trinh duyet
+        URL string mở trên trình duyệt
     """
-    return (f"https://www.google.com/maps/search/"
-            f"?api=1&query={lat:.7f},{lon:.7f}")
+    # Format: https://www.google.com/maps/place/lat,lon/@lat,lon,zoom z
+    # Đây là URL có pin rõ ràng nhất và không bị redirect
+    return (
+        f"https://www.google.com/maps/place/{lat:.7f},{lon:.7f}/"
+        f"@{lat:.7f},{lon:.7f},{zoom}z"
+    )
+
 
 
 def rov_google_maps_url(

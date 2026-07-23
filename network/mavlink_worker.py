@@ -66,7 +66,7 @@ class MAVLinkWorker(QThread):
     sig_cmd_ack = pyqtSignal(int, int)                  # (command, result)
 
     # ============================================================
-    def __init__(self, connection_string: str = "udp:0.0.0.0:14550",
+    def __init__(self, connection_string: str = "udpin:0.0.0.0:14550",
                  target_system: int = 1, parent=None):
         super().__init__(parent)
         self.connection_string = connection_string

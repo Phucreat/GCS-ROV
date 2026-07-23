@@ -4,3 +4,16 @@ pybullet>=3.2.5
 numpy>=1.24.0
 pymavlink>=2.4.37
 pyopengl>=3.1.6
+
+# ── Feature 1: AR HUD + Video ──────────────────
+opencv-python>=4.8.0        # Video capture, HUD overlay
+
+# ── Feature 2: AI Vision ───────────────────────
+# ultralytics>=8.0.0        # YOLOv8 — cài riêng khi cần:
+#   pip install ultralytics  # (~500MB, lazy load khi bật AI)
+
+# ── Feature 4: Seafloor Mapping ────────────────
+scipy>=1.11.0               # griddata nội suy lưới độ sâu
+
+# ── Optional / Enhanced ────────────────────────
+# pyqt6-webengine>=6.4.0   # Google Maps WebView (cài riêng nếu cần)

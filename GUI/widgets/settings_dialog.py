@@ -119,6 +119,32 @@ class SettingsDialog(QDialog):
         self.cb_tz.setCurrentText(settings.get("timezone", "Asia/Ho_Chi_Minh"))
         form_gen.addRow("Timezone:", self.cb_tz)
 
+        # Vị trí GCS (dùng để tính toạ độ ROV trên Google Maps)
+        lbl_gcs_hdr = QLabel("Vị trí trạm GCS (Google Maps)")
+        lbl_gcs_hdr.setStyleSheet("color:#00A8FF;font-weight:bold;margin-top:6px;")
+        form_gen.addRow(lbl_gcs_hdr)
+
+        self.ed_gcs_lat = QLineEdit(str(settings.get("gcs_lat", "")))
+        self.ed_gcs_lat.setPlaceholderText("21.028511 (vĩ độ — bắt buộc)")
+        form_gen.addRow("GCS Latitude:", self.ed_gcs_lat)
+
+        self.ed_gcs_lng = QLineEdit(str(settings.get("gcs_lng", "")))
+        self.ed_gcs_lng.setPlaceholderText("105.854167 (kinh độ — bắt buộc)")
+        form_gen.addRow("GCS Longitude:", self.ed_gcs_lng)
+
+        btn_get_loc = QtWidgets.QPushButton("📍 Lấy vị trí hiện tại")
+        btn_get_loc.setToolTip("Lấy GPS từ máy tính (nếu có module GPS/Wi-Fi)")
+        btn_get_loc.clicked.connect(self._auto_detect_location)
+        form_gen.addRow("", btn_get_loc)
+
+        lbl_gcs_info = QLabel(
+            "Nhập đúng toạ độ GCS để Google Maps hiển thị đúng vị trí ROV.\n"
+            "Mẹo: Google Maps → chuột phải vào vị trí → sao chép toạ độ."
+        )
+        lbl_gcs_info.setWordWrap(True)
+        lbl_gcs_info.setStyleSheet("color:#5B748E;font-size:10px;")
+        form_gen.addRow("", lbl_gcs_info)
+
         # --- TAB 2: LƯU TRỮ VÀ LOGS (GỘP CHUNG) ---
         tab_log = QWidget()
         form_log = QFormLayout(tab_log)
@@ -205,11 +231,102 @@ class SettingsDialog(QDialog):
         self.chk_reset_arm.setChecked(settings.get("auto_reset_origin", True))
         form_smart.addRow("Auto Reset SLAM Origin on ARM:", self.chk_reset_arm)
 
+        # --- TAB 5: VIDEO & AR HUD ---
+        tab_video = QWidget()
+        form_vid = QFormLayout(tab_video)
+
+        self.cb_vid_source = QComboBox()
+        self.cb_vid_source.addItems([
+            "UDP H.264 (ROV → GCS port 5620)",
+            "RTSP (Pi Camera)",
+            "Webcam (USB Local)",
+            "Video File",
+        ])
+        src_map = {"udp_h264": 0, "rtsp": 1, "webcam": 2, "file": 3}
+        self.cb_vid_source.setCurrentIndex(
+            src_map.get(settings.get("video_source", "udp_h264"), 0)
+        )
+        form_vid.addRow("Video Source:", self.cb_vid_source)
+
+        self.sp_udp_port = QSpinBox()
+        self.sp_udp_port.setRange(1024, 65535)
+        self.sp_udp_port.setValue(int(settings.get("udp_video_port", 5620)))
+        form_vid.addRow("UDP H.264 Port:", self.sp_udp_port)
+
+        self.ed_rtsp_url = QLineEdit(
+            settings.get("rtsp_url", "rtsp://192.168.2.2:8554/video")
+        )
+        self.ed_rtsp_url.setPlaceholderText("rtsp://192.168.2.2:8554/video")
+        form_vid.addRow("RTSP URL:", self.ed_rtsp_url)
+
+        self.sp_webcam_idx = QSpinBox()
+        self.sp_webcam_idx.setRange(0, 9)
+        self.sp_webcam_idx.setValue(int(settings.get("webcam_index", 0)))
+        form_vid.addRow("Webcam Index:", self.sp_webcam_idx)
+
+        row_vid_file = QWidget()
+        hl_vid = QHBoxLayout(row_vid_file)
+        hl_vid.setContentsMargins(0, 0, 0, 0)
+        self.ed_vid_file = QLineEdit(settings.get("video_file", ""))
+        self.ed_vid_file.setPlaceholderText("D:/test_video.mp4")
+        btn_vid_browse = QtWidgets.QPushButton("Browse...")
+        btn_vid_browse.clicked.connect(self._browse_video_file)
+        hl_vid.addWidget(self.ed_vid_file)
+        hl_vid.addWidget(btn_vid_browse)
+        form_vid.addRow("Video File Path:", row_vid_file)
+
+        self.sp_vid_fps = QSpinBox()
+        self.sp_vid_fps.setRange(5, 60)
+        self.sp_vid_fps.setValue(int(settings.get("video_fps", 30)))
+        form_vid.addRow("Target FPS:", self.sp_vid_fps)
+
+        self.cb_vid_res = QComboBox()
+        self.cb_vid_res.addItems(["320x240", "640x480", "1280x720", "1920x1080"])
+        self.cb_vid_res.setCurrentText(settings.get("video_resolution", "640x480"))
+        form_vid.addRow("Resolution:", self.cb_vid_res)
+
+        self.sw_hud = QToggleSwitch()
+        self.sw_hud.setChecked(settings.get("ar_hud_enabled", True))
+        form_vid.addRow("Enable AR HUD Overlay:", self.sw_hud)
+
+        self.sw_ai = QToggleSwitch()
+        self.sw_ai.setChecked(settings.get("ai_detection_enabled", False))
+        form_vid.addRow("Enable AI Detection:", self.sw_ai)
+
+        # ── Đường dẫn lưu ảnh/video ───────────────────────────────
+        lbl_media_hdr = QLabel("Lưu trữ Snapshot / Recording")
+        lbl_media_hdr.setStyleSheet("color:#00A8FF;font-weight:bold;margin-top:4px;")
+        form_vid.addRow(lbl_media_hdr)
+
+        row_media = QWidget()
+        hl_media = QHBoxLayout(row_media)
+        hl_media.setContentsMargins(0, 0, 0, 0)
+        default_media = settings.get("media_save_path", "")
+        self.ed_media_path = QLineEdit(default_media)
+        self.ed_media_path.setPlaceholderText("Mặc định: D:/GCS_ROV_Media")
+        btn_media = QtWidgets.QPushButton("Browse...")
+        btn_media.clicked.connect(self._browse_media_folder)
+        hl_media.addWidget(self.ed_media_path)
+        hl_media.addWidget(btn_media)
+        form_vid.addRow("Media Save Path:", row_media)
+
+        # Ghi chú
+        lbl_vid = QLabel(
+            "UDP H.264: nhận luồng H.264/RTP từ ROV qua UDP (port 5620).\n"
+            "RTSP: kết nối camera Pi qua mạng.\n"
+            "Webcam: dùng USB camera cắm trực tiếp vào GCS.\n"
+            "Video File: phát lại video để test AI."
+        )
+        lbl_vid.setWordWrap(True)
+        lbl_vid.setStyleSheet("color: #5B748E; font-size: 10px;")
+        form_vid.addRow("", lbl_vid)
+
         # Thêm các tab
         self.tabs.addTab(tab_gen, "General")
         self.tabs.addTab(tab_log, "Logging")
         self.tabs.addTab(tab_ctrl, "Controls")
         self.tabs.addTab(tab_smart, "Autopilot")
+        self.tabs.addTab(tab_video, "Video & AI")
 
         # Dialog Buttons
         btns = QDialogButtonBox(
@@ -249,30 +366,94 @@ class SettingsDialog(QDialog):
             QCheckBox { color:#A0B2C6; }
         """)
 
+    def _auto_detect_location(self):
+        """Cố gắng lấy toạ độ từ IP geolocation (không cần GPS phần cứng)."""
+        try:
+            import urllib.request, json
+            with urllib.request.urlopen("http://ip-api.com/json/?fields=lat,lon,city", timeout=4) as r:
+                data = json.loads(r.read())
+            lat, lon = data.get('lat', ''), data.get('lon', '')
+            city = data.get('city', '')
+            if lat and lon:
+                self.ed_gcs_lat.setText(str(lat))
+                self.ed_gcs_lng.setText(str(lon))
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(
+                    self, "Vị trí phát hiện",
+                    f"Tìm thấy vị trí: {city}\nLat: {lat}  Lon: {lon}\n\n"
+                    "Lưu ý: IP geolocation có sai số ~1–10 km.\n"
+                    "Hãy kiểm tra và sửa lại nếu cần."
+                )
+        except Exception as e:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self, "Không thể tự động lấy vị trí",
+                f"Lỗi: {e}\n\nVui lòng nhập thủ công tạ độ GCS."
+            )
+
+    def _browse_media_folder(self):
+        path = QFileDialog.getExistingDirectory(self, "Chọn thư mục lưu Snapshot & Video")
+        if path:
+            self.ed_media_path.setText(path)
+
+    def _browse_video_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Chọn Video File", "",
+            "Video Files (*.mp4 *.avi *.mkv *.mov);;All Files (*)"
+        )
+        if path:
+            self.ed_vid_file.setText(path)
+
     def _browse_logs_folder(self):
         path = QFileDialog.getExistingDirectory(self, "Chọn thư mục lưu Logs & Blackbox")
         if path:
             self.ed_logs.setText(path)
 
     def _save_and_accept(self):
-        logs_dir = self.ed_logs.text().strip()
+        logs_dir  = self.ed_logs.text().strip()
+        media_dir = self.ed_media_path.text().strip() or "D:/GCS_ROV_Media"
+        src_list  = ["udp_h264", "rtsp", "webcam", "file"]
+
+        # Parse GCS lat/lon
+        try:
+            gcs_lat = float(self.ed_gcs_lat.text().strip())
+        except ValueError:
+            gcs_lat = 0.0
+        try:
+            gcs_lng = float(self.ed_gcs_lng.text().strip())
+        except ValueError:
+            gcs_lng = 0.0
+
         self.settings.update({
-            "connection": self.ed_conn.text().strip(),
-            "slam_port": self.sp_slam_port.value(),
-            "timezone": self.cb_tz.currentText(),
+            "connection":     self.ed_conn.text().strip(),
+            "gcs_lat":        gcs_lat,
+            "gcs_lng":        gcs_lng,
+            "video_source":      src_list[self.cb_vid_source.currentIndex()],
+            "udp_video_port":    self.sp_udp_port.value(),
+            "rtsp_url":          self.ed_rtsp_url.text().strip(),
+            "webcam_index":      self.sp_webcam_idx.value(),
+            "video_file":        self.ed_vid_file.text().strip(),
+            "video_fps":         self.sp_vid_fps.value(),
+            "video_resolution":  self.cb_vid_res.currentText(),
+            "ar_hud_enabled":    self.sw_hud.isChecked(),
+            "ai_detection_enabled": self.sw_ai.isChecked(),
+            "media_save_path":   media_dir,
+            "slam_port":  self.sp_slam_port.value(),
+            "timezone":   self.cb_tz.currentText(),
             "blackbox_path": logs_dir,
-            "csv_log_path": os.path.join(logs_dir, "rov_activity.csv"),
-            "key_forward": self.cb_fwd.currentText(),
-            "key_backward": self.cb_bwd.currentText(),
-            "key_left": self.cb_left.currentText(),
-            "key_right": self.cb_right.currentText(),
-            "key_sway_left": self.cb_sw_l.currentText(),
+            "csv_log_path":  os.path.join(logs_dir, "rov_activity.csv"),
+            "key_forward":    self.cb_fwd.currentText(),
+            "key_backward":   self.cb_bwd.currentText(),
+            "key_left":       self.cb_left.currentText(),
+            "key_right":      self.cb_right.currentText(),
+            "key_sway_left":  self.cb_sw_l.currentText(),
             "key_sway_right": self.cb_sw_r.currentText(),
-            "key_ascend": self.cb_asc.currentText(),
-            "key_descend": self.cb_desc.currentText(),
+            "key_ascend":     self.cb_asc.currentText(),
+            "key_descend":    self.cb_desc.currentText(),
             "enable_imu_gamepad": self.sw_imu.isChecked(),
-            "rth_depth": self.sp_rth.value(),
-            "heartbeat_hz": self.sp_hz.value(),
+            "rth_depth":      self.sp_rth.value(),
+            "heartbeat_hz":   self.sp_hz.value(),
             "auto_reset_origin": self.chk_reset_arm.isChecked(),
         })
         self.accept()
+
