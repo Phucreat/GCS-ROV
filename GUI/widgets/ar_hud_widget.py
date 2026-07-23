@@ -412,10 +412,18 @@ class ARHUDWidget(QWidget):
     # ------------------------------------------------------------------
     # Main HUD drawing
     # ------------------------------------------------------------------
+        # --- Full telemetry overlay toggle (False = Clean AI-Only Mode) ---
+        self._show_full_telemetry: bool = False
+
+    def set_show_full_telemetry(self, show: bool):
+        """Enable or disable full telemetry HUD overlays on top of video."""
+        self._show_full_telemetry = bool(show)
+
     def _draw_hud(self, frame: np.ndarray) -> np.ndarray:
         """
-        Draw all HUD elements onto the BGR frame.
-        Returns the modified frame (same array, modified in place).
+        Draw AI detections & image analysis results onto the BGR frame.
+        Telemetry overlays (horizon, depth tape, heading tape, battery, status)
+        are hidden by default to keep the camera view clean and uncluttered.
         """
         cv2 = _get_cv2()
         if cv2 is None:
@@ -429,19 +437,25 @@ class ARHUDWidget(QWidget):
         if self._warning_msg and time.monotonic() > self._warning_until:
             self.clear_warning()
 
-        roll_rad  = math.radians(self._roll)
-        pitch_rad = math.radians(self._pitch)
-
-        # Drawing order (back → front)
-        self._draw_artificial_horizon(frame, cv2, cx, cy, roll_rad, pitch_rad)
-        self._draw_depth_tape(frame, cv2, w, h)
-        self._draw_heading_tape(frame, cv2, w, h)
-        self._draw_status_panel(frame, cv2, w, h)
-        self._draw_power_panel(frame, cv2, w, h)
+        # 1. Subtle centre crosshair for target orientation
         self._draw_crosshair(frame, cv2, cx, cy)
+
+        # 2. AI Detections & Image Analysis (Bounding boxes, class labels, conf %, track IDs)
         self._draw_detections(frame, cv2, h, w)
+
+        # 3. Warning overlay (if active warning)
         self._draw_warning_overlay(frame, cv2, w, h, cx, cy)
-        self._draw_timestamp(frame, cv2, w, h)
+
+        # 4. Optional full telemetry overlays (only if explicitly enabled)
+        if getattr(self, '_show_full_telemetry', False):
+            roll_rad  = math.radians(self._roll)
+            pitch_rad = math.radians(self._pitch)
+            self._draw_artificial_horizon(frame, cv2, cx, cy, roll_rad, pitch_rad)
+            self._draw_depth_tape(frame, cv2, w, h)
+            self._draw_heading_tape(frame, cv2, w, h)
+            self._draw_status_panel(frame, cv2, w, h)
+            self._draw_power_panel(frame, cv2, w, h)
+            self._draw_timestamp(frame, cv2, w, h)
 
         return frame
 

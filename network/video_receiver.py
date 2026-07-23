@@ -381,7 +381,10 @@ class VideoReceiver(QThread):
 
             elif source_type is VideoSource.WEBCAM:
                 index = int(url_or_index)
-                cap = cv2.VideoCapture(index)
+                # Try CAP_DSHOW for faster/reliable capture on Windows
+                cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+                if not cap.isOpened():
+                    cap = cv2.VideoCapture(index)
                 # Request desired resolution from the driver
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._target_w)
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._target_h)

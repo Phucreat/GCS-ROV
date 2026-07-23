@@ -378,15 +378,54 @@ class ROVMainWindow(QMainWindow):
                 target_fps=fps, target_w=target_w, target_h=target_h
             )
 
-        # Tạo AR HUD Widget — cửa sổ nổi
-        self._ar_hud = ARHUDWidget(parent=None)
-        self._ar_hud.setWindowTitle("📹 Live Video + AR HUD")
-        self._ar_hud.resize(target_w + 20, target_h + 60)
-        self._ar_hud.set_hud_enabled(
-            self.settings.get('ar_hud_enabled', True)
-        )
+        # ── Embed AR HUD Widget vào khung LIVE CAMERA FEED của GUI chính ──
+        if hasattr(self.ui, 'frm_simulate_camera'):
+            if hasattr(self.ui, 'opw_camera'):
+                self.ui.opw_camera.hide()
+            cam_layout = self.ui.verticalLayout_5
 
-        # Kết nối video → HUD + cập nhật frame cười
+            # Tạo thanh chọn nguồn video nhanh trực tiếp trên GUI
+            row_src = QtWidgets.QWidget()
+            h_box = QtWidgets.QHBoxLayout(row_src)
+            h_box.setContentsMargins(2, 2, 2, 2)
+
+            lbl_src = QtWidgets.QLabel("Nguồn Video:")
+            lbl_src.setStyleSheet("color:#00A8FF; font-weight:bold; font-size:11px;")
+
+            self.cb_quick_vid_src = QtWidgets.QComboBox()
+            self.cb_quick_vid_src.addItems([
+                "💻 Laptop Webcam (Cam 0)",
+                "📡 ROV UDP Stream (Port 5620)",
+                "🌐 RTSP Stream",
+                "📁 Video File"
+            ])
+            self.cb_quick_vid_src.setStyleSheet(
+                "QComboBox{background:#0D1726; color:#00FF66; border:1px solid #1E3550; "
+                "border-radius:3px; padding:2px 6px; font-size:11px;}"
+            )
+            src_key = self.settings.get('video_source', 'webcam')
+            map_idx = {'webcam': 0, 'udp_h264': 1, 'rtsp': 2, 'file': 3}
+            self.cb_quick_vid_src.setCurrentIndex(map_idx.get(src_key, 0))
+            self.cb_quick_vid_src.currentIndexChanged.connect(self._on_quick_video_source_changed)
+
+            h_box.addWidget(lbl_src)
+            h_box.addWidget(self.cb_quick_vid_src)
+            h_box.addStretch()
+
+            cam_layout.addWidget(row_src)
+
+            # Tạo AR HUD Widget nhúng trực tiếp vào main GUI
+            self._ar_hud = ARHUDWidget(parent=self.ui.frm_simulate_camera)
+            self._ar_hud.set_hud_enabled(self.settings.get('ar_hud_enabled', True))
+            cam_layout.addWidget(self._ar_hud)
+        else:
+            # Fallback tạo cửa sổ nổi nếu không tìm thấy frm_simulate_camera
+            self._ar_hud = ARHUDWidget(parent=None)
+            self._ar_hud.setWindowTitle("📹 Live Video + AR HUD")
+            self._ar_hud.resize(target_w + 20, target_h + 60)
+            self._ar_hud.set_hud_enabled(self.settings.get('ar_hud_enabled', True))
+
+        # Kết nối video → HUD + ghi hình
         def _on_frame_received(frame):
             import numpy as _np
             self._last_frame = frame.copy()
@@ -410,21 +449,81 @@ class ROVMainWindow(QMainWindow):
         if HAS_AI and self.settings.get('ai_detection_enabled', False):
             self._setup_ai_pipeline()
 
-        # Thêm nút mở Video Window vào header
+        # Thêm nút mở Video Window cửa sổ nổi vào header
         if hasattr(self.ui, 'setup_systeam'):
-            btn_vid = QtWidgets.QPushButton("📹 Video", self)
+            btn_vid = QtWidgets.QPushButton("📹 Cửa sổ Video", self)
             btn_vid.setStyleSheet(
                 "QPushButton{background:#0D1726;color:#00FF66;"
                 "border:1px solid #1E3550;border-radius:4px;padding:3px 8px;}"
                 "QPushButton:hover{border-color:#00FF66;}"
             )
-            btn_vid.clicked.connect(self._ar_hud.show)
+            btn_vid.clicked.connect(self._popout_video_window)
             hdr_layout = self.ui.setup_systeam.parentWidget().layout()
             if hdr_layout:
                 idx = hdr_layout.indexOf(self.ui.setup_systeam)
                 hdr_layout.insertWidget(idx, btn_vid)
 
         self._video_rx.start()
+
+    def _on_quick_video_source_changed(self, index: int):
+        """Đổi nhanh nguồn Video trực tiếp từ ComboBox trên GUI chính."""
+        if not self._video_rx:
+            return
+        if index == 0:  # Laptop Webcam
+            idx = int(self.settings.get('webcam_index', 0))
+            self.settings['video_source'] = 'webcam'
+            self._video_rx.set_source(VideoSource.WEBCAM, idx)
+            print(f"[Video] Switched to Laptop Webcam (Index {idx})")
+        elif index == 1:  # ROV UDP Stream
+            port = int(self.settings.get('udp_video_port', 5620))
+            self.settings['video_source'] = 'udp_h264'
+            self._video_rx.set_source(VideoSource.UDP_H264, port)
+            print(f"[Video] Switched to ROV UDP Stream (Port {port})")
+        elif index == 2:  # RTSP
+            url = self.settings.get('rtsp_url', 'rtsp://192.168.2.2:8554/video')
+            self.settings['video_source'] = 'rtsp'
+            self._video_rx.set_source(VideoSource.RTSP, url)
+            print(f"[Video] Switched to RTSP Stream ({url})")
+        elif index == 3:  # File
+            path = self.settings.get('video_file', '')
+            self.settings['video_source'] = 'file'
+            self._video_rx.set_source(VideoSource.FILE, path)
+            print(f"[Video] Switched to Video File ({path})")
+
+    def _popout_video_window(self):
+        """Mở video ra một cửa sổ riêng biệt nếu người dùng muốn phóng to."""
+        if hasattr(self, '_popout_dialog') and self._popout_dialog:
+            self._popout_dialog.raise_()
+            self._popout_dialog.activateWindow()
+            return
+        dlg = QtWidgets.QDialog(self)
+        dlg.setWindowTitle("📹 Live Camera Feed + AR HUD (Cửa sổ lớn)")
+        dlg.resize(960, 600)
+        lay = QtWidgets.QVBoxLayout(dlg)
+        
+        # Nhúng AR HUD copy / view
+        hud_standalone = ARHUDWidget(parent=dlg)
+        hud_standalone.set_hud_enabled(self.settings.get('ar_hud_enabled', True))
+        lay.addWidget(hud_standalone)
+        
+        # Kết nối frame
+        if self._video_rx:
+            self._video_rx.sig_frame.connect(hud_standalone.set_frame)
+            if self._ai_proc:
+                self._ai_proc.sig_detections.connect(hud_standalone.set_detections)
+                
+        def _on_close(event):
+            if self._video_rx:
+                try:
+                    self._video_rx.sig_frame.disconnect(hud_standalone.set_frame)
+                except Exception:
+                    pass
+            self._popout_dialog = None
+            event.accept()
+
+        dlg.closeEvent = _on_close
+        self._popout_dialog = dlg
+        dlg.show()
 
     def _setup_ai_pipeline(self):
         """Khởi tạo AI detection processor và control panel."""
@@ -1368,7 +1467,7 @@ def main():
         "gcs_lat":       0.0,
         "gcs_lng":       0.0,
         # Video
-        "video_source":  "udp_h264",
+        "video_source":  "webcam",
         "udp_video_port": 5620,
         "rtsp_url":      "rtsp://192.168.2.2:8554/video",
         "video_fps":     30,
