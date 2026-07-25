@@ -248,6 +248,9 @@ class ROVMainWindow(QMainWindow):
         self._inject_telemetry_table()
         self._setup_telemetry_table()
 
+        # Tự động mở 100% toàn màn hình khi khởi chạy
+        self.showMaximized()
+
     # ----------------------------------------------------------
     # INJECT WIDGETS VÀO LAYOUT GỐC
     # ----------------------------------------------------------
@@ -343,9 +346,9 @@ class ROVMainWindow(QMainWindow):
             if hasattr(self.ui, 'setup_systeam'):
                 btn_mp = QtWidgets.QPushButton("📍 Mission", self)
                 btn_mp.setStyleSheet(
-                    "QPushButton{background:#0D1726;color:#00A8FF;"
-                    "border:1px solid #1E3550;border-radius:4px;padding:3px 8px;}"
-                    "QPushButton:hover{border-color:#00A8FF;}"
+                    "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #142338,stop:1 #0C1827);"
+                    "color:#00D4FF;border:1px solid #1D3554;border-radius:6px;padding:4px 10px;font-weight:bold;font-size:11px;}"
+                    "QPushButton:hover{background:#00A8FF;color:#FFFFFF;border-color:#00F0FF;}"
                 )
                 btn_mp.clicked.connect(self._mission_planner.show)
                 # Chèn vào layout header nếu có
@@ -411,7 +414,7 @@ class ROVMainWindow(QMainWindow):
 
             lbl_src = QtWidgets.QLabel("Nguồn Video:")
             lbl_src.setStyleSheet(
-                "color:#00A8FF; font-weight:bold; font-size:11px;")
+                "color:#00E5FF; font-weight:bold; font-size:11px; text-transform:uppercase; letter-spacing:0.5px;")
 
             self.cb_quick_vid_src = QtWidgets.QComboBox()
             self.cb_quick_vid_src.addItems([
@@ -421,8 +424,10 @@ class ROVMainWindow(QMainWindow):
                 "📁 Video File"
             ])
             self.cb_quick_vid_src.setStyleSheet(
-                "QComboBox{background:#0D1726; color:#00FF66; border:1px solid #1E3550; "
-                "border-radius:3px; padding:2px 6px; font-size:11px;}"
+                "QComboBox{background:#0C1727; color:#00FF9D; border:1px solid #1D3554; "
+                "border-radius:6px; padding:3px 8px; font-weight:bold; font-size:11px;}"
+                "QComboBox:hover{border:1px solid #00FF9D; background-color:#112238;}"
+                "QComboBox QAbstractItemView{background-color:#0A1220; color:#00FF9D; border:1px solid #00FF9D; border-radius:6px; selection-background-color:rgba(0,255,157,0.25); selection-color:#FFFFFF; padding:4px;}"
             )
             src_key = self.settings.get('video_source', 'webcam')
             map_idx = {'webcam': 0, 'udp_h264': 1, 'rtsp': 2, 'file': 3}
@@ -478,9 +483,9 @@ class ROVMainWindow(QMainWindow):
         if hasattr(self.ui, 'setup_systeam'):
             btn_vid = QtWidgets.QPushButton("📹 Cửa sổ Video", self)
             btn_vid.setStyleSheet(
-                "QPushButton{background:#0D1726;color:#00FF66;"
-                "border:1px solid #1E3550;border-radius:4px;padding:3px 8px;}"
-                "QPushButton:hover{border-color:#00FF66;}"
+                "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #0C3322,stop:1 #072015);"
+                "color:#00FF9D;border:1px solid #00FF9D;border-radius:6px;padding:4px 10px;font-weight:bold;font-size:11px;}"
+                "QPushButton:hover{background:#00FF9D;color:#060B14;border-color:#80FFC9;}"
             )
             btn_vid.clicked.connect(self._popout_video_window)
             hdr_layout = self.ui.setup_systeam.parentWidget().layout()
@@ -1298,16 +1303,33 @@ class ROVMainWindow(QMainWindow):
         table.setSelectionBehavior(
             QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         table.setStyleSheet("""
-            QTableWidget { background:#060B14; color:#A0B2C6;
-                           alternate-background-color:#0A1422;
-                           gridline-color:#1E3550;
-                           border: none; }
-            QHeaderView::section { background:#0D1726; color:#5B748E;
-                                   border:1px solid #1E3550;
-                                   font-size:9px; font-weight:bold;
-                                   letter-spacing:1px; padding:3px; }
-            QTableWidget::item { padding:2px 4px; }
-            QTableWidget::item:selected { background:rgba(0,168,255,0.15); }
+            QTableWidget {
+                background-color: #060C17;
+                color: #94A9C4;
+                alternate-background-color: #0A1424;
+                gridline-color: #162B47;
+                border: none;
+                font-size: 11px;
+            }
+            QHeaderView::section {
+                background-color: #101E33;
+                color: #00E5FF;
+                border: none;
+                border-bottom: 2px solid #00F0FF;
+                font-size: 9px;
+                font-weight: bold;
+                letter-spacing: 1.2px;
+                padding: 4px 6px;
+                text-transform: uppercase;
+            }
+            QTableWidget::item {
+                padding: 3px 6px;
+                border-bottom: 1px solid rgba(27, 47, 74, 0.4);
+            }
+            QTableWidget::item:selected {
+                background-color: rgba(0, 240, 255, 0.18);
+                color: #FFFFFF;
+            }
         """)
         # Các hàng cố định
         self._telem_rows = {
@@ -1664,7 +1686,7 @@ def main():
 
     window = ROVMainWindow(settings)
     window.setWindowTitle("E3 LAB — ROV CONTROL SYSTEM v1.0")
-    window.show()
+    window.showMaximized()  # Tự động mở 100% toàn màn hình
 
     sys.exit(app.exec())
 
