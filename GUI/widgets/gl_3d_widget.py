@@ -452,12 +452,45 @@ class GLROVWidget(gl.GLViewWidget):
         self._traj_line     = None   # recent solid trail
         self._traj_dots     = None   # historical dotted trail
         self._slam_item     = None
-        self._fov_item      = None
-        self._vel_items     = []     # velocity vector (line + cone)
         self._waypoint_items= []     # waypoint markers
         self._wp_path_item  = None   # waypoint connecting path
         self._depth_plane   = None   # max depth warning plane
-        self._prox_ring     = None   # proximity alert ring
+
+        # ── Pre-allocated velocity arrow (reused, never deleted) ──
+        self._vel_line = gl.GLLinePlotItem(
+            pos=np.zeros((2, 3), np.float32),
+            color=(1., 0.85, 0., 1.), width=3.5, antialias=True
+        )
+        self._vel_line.setVisible(False)
+        self.addItem(self._vel_line)
+
+        cv, cf = ProcMeshBuilder.cone(r=0.048, h=0.12, segs=14)
+        cone_colors = np.tile([1., 0.85, 0., 1.], (len(cf), 1))
+        self._vel_cone = gl.GLMeshItem(
+            vertexes=cv, faces=cf, faceColors=cone_colors,
+            smooth=True, drawEdges=False
+        )
+        self._vel_cone.setVisible(False)
+        self.addItem(self._vel_cone)
+
+        # ── Pre-allocated FOV effect line (reused) ───────────────
+        self._fov_item = gl.GLLinePlotItem(
+            pos=np.zeros((2, 3), np.float32),
+            color=(0, 0.9, 1, 0.3), width=1.5, antialias=True
+        )
+        self._fov_item.setVisible(False)
+        self.addItem(self._fov_item)
+
+        # ── Pre-allocated proximity ring (reused) ────────────────
+        self._prox_ring = gl.GLLinePlotItem(
+            pos=np.zeros((2, 3), np.float32),
+            color=(1., 0.1, 0.1, 0.85), width=3.0, antialias=True
+        )
+        self._prox_ring.setVisible(False)
+        self.addItem(self._prox_ring)
+
+        # ── Trajectory throttle counter ──────────────────────────
+        self._traj_update_cnt = 0
 
         # Water surface state
         self._water_mesh    = None
@@ -732,9 +765,9 @@ class GLROVWidget(gl.GLViewWidget):
         for it in self._rov_items:
             self.removeItem(it)
         self._rov_items.clear()
-        for it in self._vel_items:
-            self.removeItem(it)
-        self._vel_items.clear()
+        # Velocity arrow items are persistent (pre-allocated), just hide them
+        self._vel_line.setVisible(False)
+        self._vel_cone.setVisible(False)
 
         if cad_file:
             self._build_cad(cad_file)
@@ -882,11 +915,10 @@ class GLROVWidget(gl.GLViewWidget):
             it.translate(*pos)
 
     def _update_vel_vector(self, speed, hdg_deg, pitch_deg, pos):
-        """Mũi tên vận tốc gắn trên thân ROV."""
-        for it in self._vel_items:
-            self.removeItem(it)
-        self._vel_items.clear()
+        """Mũi tên vận tốc gắn trên thân ROV — reuses pre-allocated items."""
         if speed < 0.05:
+            self._vel_line.setVisible(False)
+            self._vel_cone.setVisible(False)
             return
         hdg  = math.radians(hdg_deg)
         pit  = math.radians(-pitch_deg)
@@ -896,8 +928,28 @@ class GLROVWidget(gl.GLViewWidget):
         dz = math.sin(pit) * scale
         end = pos + np.array([dx, -dy, -dz])  # NED→GL
         pts = np.array([pos.tolist(), end.tolist()], np.float32)
-        line = gl.GLLinePlotItem(pos=pts, color=(1.,0.85,0.,1.), width=3.5, antialias=True)
-        self.addItem(line); self._vel_items.append(line)
+        self._vel_line.setData(pos=pts)
+        self._vel_line.setVisible(True)
+
+        # Cone — reuse with transform
+        v_dir = (end - pos)
+        v_len = np.linalg.norm(v_dir)
+        if v_len > 1e-6:
+            v_dir /= v_len
+        cone_pos = end - v_dir * 0.12
+        # Compute rotation from Z-axis to velocity direction
+        z_axis = np.array([0., 0., 1.])
+        if abs(v_dir[2]) < 0.999:
+            rot_ax = np.cross(z_axis, v_dir)
+            rot_ax /= np.linalg.norm(rot_ax)
+            rot_ang = math.degrees(math.acos(np.clip(np.dot(z_axis, v_dir), -1, 1)))
+        else:
+            rot_ax = np.array([1., 0., 0.])
+            rot_ang = 0.0 if v_dir[2] > 0 else 180.0
+        self._vel_cone.resetTransform()
+        self._vel_cone.rotate(rot_ang, *rot_ax)
+        self._vel_cone.translate(*cone_pos)
+        self._vel_cone.setVisible(True)
 
     def _update_camera(self, gl_pos):
         if self._user_ctrl:
@@ -923,6 +975,11 @@ class GLROVWidget(gl.GLViewWidget):
         self._traj_pts.append([x, -y, -z])
         if len(self._traj_pts) > self.MAX_TRAJ_POINTS:
             self._traj_pts.pop(0)
+
+        # Throttle: only redraw every 3 frames to reduce numpy overhead
+        self._traj_update_cnt += 1
+        if self._traj_update_cnt % 3 != 0:
+            return
 
         pts = np.array(self._traj_pts, np.float32)
         n   = len(pts)
@@ -997,10 +1054,9 @@ class GLROVWidget(gl.GLViewWidget):
         self._update_prox_ring(near)
 
     def _update_prox_ring(self, active: bool):
-        if self._prox_ring is not None:
-            self.removeItem(self._prox_ring)
-            self._prox_ring = None
+        """Proximity ring — reuses pre-allocated GLLinePlotItem."""
         if not active:
+            self._prox_ring.setVisible(False)
             return
         segs = 40
         ang  = np.linspace(0, 2*math.pi, segs, endpoint=False)
@@ -1011,17 +1067,14 @@ class GLROVWidget(gl.GLViewWidget):
         pts[:segs, 1] = p[1] + r*np.sin(ang)
         pts[:segs, 2] = p[2]
         pts[segs]     = pts[0]
-        self._prox_ring = gl.GLLinePlotItem(
-            pos=pts, color=(1.,0.1,0.1,0.85), width=3.0, antialias=True
-        )
-        self.addItem(self._prox_ring)
+        self._prox_ring.setData(pos=pts)
+        self._prox_ring.setVisible(True)
 
     # ──────────────────────────────────────────────────────────
     # FOV EFFECT
     # ──────────────────────────────────────────────────────────
     def update_fov_effect(self, heading_deg: float, fov_deg: float = 60.0):
-        if self._fov_item is not None:
-            self.removeItem(self._fov_item); self._fov_item = None
+        """FOV cone overlay — reuses pre-allocated GLLinePlotItem."""
         pos  = self._current_pos
         half = math.radians(fov_deg/2)
         yaw  = math.radians(heading_deg)
@@ -1036,8 +1089,8 @@ class GLROVWidget(gl.GLViewWidget):
         c   = np.zeros((n,4), np.float32)
         c[:,0]=0.; c[:,1]=0.90; c[:,2]=1.0
         c[:,3]=np.linspace(0.30, 0., n)
-        self._fov_item = gl.GLLinePlotItem(pos=arr, color=c, width=1.5, antialias=True)
-        self.addItem(self._fov_item)
+        self._fov_item.setData(pos=arr, color=c)
+        self._fov_item.setVisible(True)
 
     # ──────────────────────────────────────────────────────────
     # WAYPOINTS (GCS Feature)

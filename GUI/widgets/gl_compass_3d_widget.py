@@ -262,16 +262,41 @@ class GLCompass3DWidget(gl.GLViewWidget):
         self._ring_items     = []
         self._tick_items     = []
         self._dir_items      = []
-        self._vel_items      = []   # velocity arrow (line + cone)
+        self._vel_items      = []   # velocity arrow (deprecated, kept for compat)
         self._slam_item      = None
         self._pitch_lines    = []
         self._roll_arc_item  = None
+
+        # Pre-allocated velocity arrow items (reused, never deleted)
+        self._vel_line = None  # Sẽ khởi tạo sau _setup_scene
+        self._vel_cone = None
 
         # HUD overlay
         self._hud = _CompassHUD(self)
         self._hud.setGeometry(self.rect())
 
         self._setup_scene()
+        self._init_vel_arrow()
+
+    def _init_vel_arrow(self):
+        """Pre-allocate velocity arrow GL items (line + cone) một lần duy nhất."""
+        # Line thân mũi tên
+        self._vel_line = gl.GLLinePlotItem(
+            pos=np.zeros((2, 3), np.float32),
+            color=self.COLOR_VEL, width=4.0, antialias=True
+        )
+        self._vel_line.setVisible(False)
+        self.addItem(self._vel_line)
+
+        # Cone đầu mũi tên
+        cv, cf = ProcMeshBuilder.cone(r=0.048, h=0.12, segs=14)
+        cone_colors = np.tile(list(self.COLOR_VEL), (len(cf), 1))
+        self._vel_cone = gl.GLMeshItem(
+            vertexes=cv, faces=cf, faceColors=cone_colors,
+            smooth=True, drawEdges=False
+        )
+        self._vel_cone.setVisible(False)
+        self.addItem(self._vel_cone)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -546,14 +571,13 @@ class GLCompass3DWidget(gl.GLViewWidget):
             item.rotate(roll,  1, 0, 0)
 
     def _update_velocity_arrow(self, vel_gl: np.ndarray):
-        """Vẽ vector vận tốc 3D: line + cone mũi tên."""
-        # Xóa arrow cũ
-        for item in self._vel_items:
-            self.removeItem(item)
-        self._vel_items.clear()
-
+        """Cập nhật vector vận tốc 3D: reuse pre-allocated line + cone."""
         speed = np.linalg.norm(vel_gl)
         if speed < 0.04:
+            if self._vel_line is not None:
+                self._vel_line.setVisible(False)
+            if self._vel_cone is not None:
+                self._vel_cone.setVisible(False)
             return
 
         max_len  = 0.80
@@ -562,18 +586,13 @@ class GLCompass3DWidget(gl.GLViewWidget):
         end_pt   = v_dir * arr_len
         cone_len = 0.12
 
-        # Line thân mũi tên
+        # Line thân mũi tên — chỉ setData, không tạo mới
         shaft_end = end_pt - v_dir * cone_len
         pts = np.array([[0., 0., 0.], shaft_end.tolist()], dtype=np.float32)
-        line = gl.GLLinePlotItem(
-            pos=pts, color=self.COLOR_VEL, width=4.0, antialias=True
-        )
-        self.addItem(line)
-        self._vel_items.append(line)
+        self._vel_line.setData(pos=pts)
+        self._vel_line.setVisible(True)
 
-        # Cone đầu mũi tên
-        cv, cf = ProcMeshBuilder.cone(r=0.048, h=cone_len, segs=14)
-        # Xoay cone về hướng vel_gl
+        # Cone đầu mũi tên — chỉ resetTransform + rotate + translate
         if abs(v_dir[2]) < 0.999:
             z_axis  = np.array([0., 0., 1.])
             rot_ax  = np.cross(z_axis, v_dir)
@@ -583,15 +602,10 @@ class GLCompass3DWidget(gl.GLViewWidget):
             rot_ax  = np.array([1., 0., 0.])
             rot_ang = 0.0 if v_dir[2] > 0 else 180.0
 
-        cone_colors = np.tile(list(self.COLOR_VEL), (len(cf), 1))
-        cone_mesh   = gl.GLMeshItem(
-            vertexes=cv, faces=cf, faceColors=cone_colors,
-            smooth=True, drawEdges=False
-        )
-        cone_mesh.translate(*shaft_end)
-        cone_mesh.rotate(rot_ang, *rot_ax)
-        self.addItem(cone_mesh)
-        self._vel_items.append(cone_mesh)
+        self._vel_cone.resetTransform()
+        self._vel_cone.rotate(rot_ang, *rot_ax)
+        self._vel_cone.translate(*shaft_end)
+        self._vel_cone.setVisible(True)
 
     def update_slam_points(self, pts_xyz: np.ndarray):
         """Hiển thị point cloud 3D quanh ROV trong radar."""

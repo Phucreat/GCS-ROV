@@ -152,7 +152,13 @@ class ROVMainWindow(QMainWindow):
         self._input_hdlr = None
         self._origin_set = False
 
-        # Dữ liệu telemetry (cập nhật từ MAVLink)
+        # ══════════════════════════════════════════════════════
+        # POLLING MODEL: Dữ liệu telemetry được buffer ở đây.
+        # Các signal handler từ MAVLink CHỈ ghi vào biến này.
+        # _on_frame() là NƠI DUY NHẤT đọc và cập nhật widget.
+        # Điều này tách rời hoàn toàn luồng nhận (network)
+        # khỏi luồng vẽ (GUI), loại bỏ giật lag.
+        # ══════════════════════════════════════════════════════
         self._roll = 0.0   # rad
         self._pitch = 0.0
         self._yaw = 0.0
@@ -167,6 +173,14 @@ class ROVMainWindow(QMainWindow):
         self._sys_status = "ACTIVE"
         self._connected = False
         self._link_quality = 0
+
+        # Dirty flags — đánh dấu dữ liệu mới từ MAVLink chưa render
+        self._dirty_attitude = False
+        self._dirty_position = False
+        self._dirty_battery  = False
+        self._dirty_heartbeat = False
+        # Frame counter cho throttling các tác vụ nặng
+        self._frame_count = 0
 
         # Telemetry table data
         self._named_sensors: dict = {}
@@ -831,50 +845,67 @@ class ROVMainWindow(QMainWindow):
     # VÒNG LẶP CHÍNH 60 FPS
     # ----------------------------------------------------------
     def _on_frame(self):
-        """Gọi mỗi 16ms: bước vật lý + cập nhật tất cả widget."""
+        """
+        Vòng lặp chính 60 FPS — NƠI DUY NHẤT cập nhật widget.
+        ════════════════════════════════════════════════════════
+        Mô hình Polling (Polling Model):
+          - MAVLink signal handlers CHỈ ghi dữ liệu vào biến buffer
+            (self._roll, self._pos_ned, self._voltage, ...) + đặt dirty flag.
+          - _on_frame() đọc buffer, reset dirty flag, cập nhật widget.
+          - Loại bỏ hoàn toàn xung đột giữa tần suất nhận MAVLink
+            (50Hz attitude, 10Hz position) và tần suất vẽ (60 FPS GUI).
+        
+        Tối ưu hóa bổ sung:
+          - Trajectory: chỉ cập nhật mỗi 3 frame (~20 Hz)
+          - FOV effect: chỉ cập nhật mỗi 4 frame (~15 Hz)
+          - Header labels: chỉ cập nhật mỗi 10 frame (~6 Hz)
+          - Power widget: chỉ cập nhật mỗi 6 frame (~10 Hz)
+          - CSV log: chỉ ghi mỗi 60 frame (~1 Hz)
+        """
         if self._physics is None:
             return
 
-        # 1. Cập nhật các nút nhấn từ bàn phím mượt mà liên tục
+        self._frame_count += 1
+
+        # ── 1. Keyboard input + Low-pass filter (mượt mà) ────
         self._update_keyboard_controls()
-
-        # Áp dụng bộ lọc thông thấp (low-pass filter) làm mượt tín hiệu điều khiển tránh giật động cơ
-        alpha = 0.22  # Hệ số làm mượt
+        alpha = 0.22
         for k in self._ctrl:
-            self._smoothed_ctrl[k] = self._smoothed_ctrl[k] * \
-                (1 - alpha) + self._ctrl[k] * alpha
+            self._smoothed_ctrl[k] = (
+                self._smoothed_ctrl[k] * (1 - alpha)
+                + self._ctrl[k] * alpha
+            )
 
-        # 2. Áp điều khiển đã được làm mượt
+        # ── 2. Điều khiển ─────────────────────────────────────
         if not self._connected:
             self._physics.set_control(**self._smoothed_ctrl)
         else:
-            # Gửi lệnh điều khiển đã được làm mượt qua MAVLink
             self._send_mavlink_control()
 
-        # 3. Bước vật lý (4 sub-steps cho ổn định)
+        # ── 3. Bước vật lý (4 sub-steps ổn định) ─────────────
         state = None
         dt = 1 / 240.0
         for _ in range(4):
             state = self._physics.step(dt)
-
         if state is None:
             return
 
-        pos = state["position"]
-        quat = state["orientation_quat"]  # [qx, qy, qz, qw]
-
-        # 4. Nếu đang kết nối, dùng dữ liệu MAVLink thay cho physics
+        # ── 4. Chọn nguồn dữ liệu: Physics hoặc MAVLink ─────
         if self._connected:
-            pos = self._pos_ned
-            # Chuyển Euler → Quaternion
+            pos  = self._pos_ned
             quat = self._euler_to_quat(self._roll, self._pitch, self._yaw)
+            vel  = self._vel_ned
+        else:
+            pos  = state["position"]
+            quat = state["orientation_quat"]
+            vel  = np.array(state.get("linear_velocity", [0, 0, 0]))
 
-        # 5. Cập nhật 3D widget (kèm dữ liệu HUD)
-        vel_now = self._vel_ned if self._connected else np.array(
-            state.get("linear_velocity", [0, 0, 0]))
-        spd_now = float(np.linalg.norm(vel_now))
-        roll_deg = math.degrees(self._roll)
+        spd_now   = float(np.linalg.norm(vel))
+        roll_deg  = math.degrees(self._roll)
         pitch_deg = math.degrees(self._pitch)
+
+        # ── 5. Cập nhật 3D ROV widget (MỖI FRAME) ────────────
+        #    update_pose chỉ setData/resetTransform, không tạo GL item mới
         self.gl_3d.update_pose(
             pos, quat,
             heading_deg=self._heading,
@@ -884,34 +915,41 @@ class ROVMainWindow(QMainWindow):
             pitch_deg=pitch_deg,
         )
 
-        # 6. Cập nhật trajectory
+        # ── 6. Trajectory — throttle ~20 Hz (mỗi 3 frame) ───
         if not self._origin_set and np.any(pos != 0):
             self.gl_3d.set_origin(pos)
             self._origin_set = True
-        self.gl_3d.update_trajectory(pos[0], pos[1], pos[2])
+        if self._frame_count % 3 == 0:
+            self.gl_3d.update_trajectory(pos[0], pos[1], pos[2])
 
-        # 7. Cập nhật FOV effect
-        self.gl_3d.update_fov_effect(self._heading)
+        # ── 7. FOV effect — throttle ~15 Hz (mỗi 4 frame) ───
+        if self._frame_count % 4 == 0:
+            self.gl_3d.update_fov_effect(self._heading)
 
-        # 8. Cập nhật la bàn 3D (Compass 3D) và Radar Point Cloud
-        vel = self._vel_ned if self._connected else np.array(
-            state.get("linear_velocity", [0, 0, 0]))
+        # ── 8. Compass 3D (MỖI FRAME — widget nhỏ, nhẹ) ─────
         self.compass_3d.update_state(quat, vel, depth=self._depth)
 
-        # 9. Cập nhật Power widget
-        if self._connected:
-            loads = [abs(v) for v in state.get("thruster_pct", [])]
-            loads_norm = [t / 100.0 for t in loads]
-        else:
-            loads_norm = [abs(v) for v in self._physics._thruster_inputs]
-        self.power_widget.set_thruster_loads(loads_norm)
-        self.power_widget.set_battery(self._voltage, self._current)
+        # ── 9. Power widget — throttle ~10 Hz (mỗi 6 frame) ──
+        if self._frame_count % 6 == 0:
+            if self._connected:
+                loads = [abs(v) for v in state.get("thruster_pct", [])]
+                loads_norm = [t / 100.0 for t in loads]
+            else:
+                loads_norm = [abs(v) for v in self._physics._thruster_inputs]
+            self.power_widget.set_thruster_loads(loads_norm)
+            self.power_widget.set_battery(self._voltage, self._current)
 
-        # 10. Cập nhật label trên header
-        self._update_header_labels()
+        # ── 10. Header labels — throttle ~6 Hz (mỗi 10 frame) ─
+        if self._frame_count % 10 == 0:
+            self._update_header_labels()
 
-        # 11. Ghi log hoạt động CSV định kỳ (1 Hz)
-        self._log_to_csv()
+        # ── 11. CSV log — throttle ~1 Hz (mỗi 60 frame) ──────
+        if self._frame_count % 60 == 0:
+            self._log_to_csv()
+
+        # Reset counter tránh overflow (mỗi ~18 giờ @ 60fps)
+        if self._frame_count >= 3_600_000:
+            self._frame_count = 0
 
     # ----------------------------------------------------------
     # MAVLINK SIGNAL HANDLERS
@@ -941,36 +979,44 @@ class ROVMainWindow(QMainWindow):
         self.ui.lbl_status_value.setText(status)
 
     def _on_attitude(self, roll: float, pitch: float, yaw: float):
-        """Nhận ATTITUDE từ MAVLink (rad)."""
+        """
+        Nhận ATTITUDE từ MAVLink (rad).
+        POLLING MODEL: Chỉ ghi buffer, KHÔNG gọi widget.update().
+        """
         self._roll = roll
         self._pitch = pitch
         self._yaw = yaw
         self._heading = math.degrees(yaw) % 360.0
+        self._dirty_attitude = True
 
     def _on_position_ned(self, x, y, z, vx, vy, vz):
-        """Nhận LOCAL_POSITION_NED (SLAM fused position)."""
+        """
+        Nhận LOCAL_POSITION_NED (SLAM fused position).
+        POLLING MODEL: Chỉ buffer dữ liệu + inject vào physics engine.
+        Widget sẽ được cập nhật trong _on_frame().
+        """
         self._pos_ned = np.array([x, y, z])
         self._vel_ned = np.array([vx, vy, vz])
-        # Inject vào physics để đồng bộ
+        self._dirty_position = True
+        # Physics engine cần pose mới nhất để tính step tiếp theo
         if self._physics and self._connected:
             quat = self._euler_to_quat(self._roll, self._pitch, self._yaw)
             self._physics.set_external_pose([x, y, z], quat.tolist())
-            if not self._origin_set:
-                self.gl_3d.set_origin(np.array([x, y, z]))
-                self._origin_set = True
 
     def _on_vfr_hud(self, depth: float, heading: float, throttle: float):
+        """POLLING MODEL: Chỉ buffer."""
         self._depth = depth
         self._heading = heading
         self._throttle = throttle
 
     def _on_sys_status(self, volt: float, curr: float, remain: int):
+        """POLLING MODEL: Buffer pin + diagnostics (lightweight computation)."""
         self._voltage = volt
         self._current = curr
-        # ── Feature 5: Diagnostics ────────────────────────────────
+        self._dirty_battery = True
+        # Diagnostics engine chỉ tính toán số học nhẹ, không gọi widget
         if self._diagnostics:
             self._diagnostics.on_sys_status(volt, curr, remain)
-            # Truyền throttle hiện tại vào diagnostics
             throttle_norm = abs(self._ctrl.get('surge', 0.0))
             self._diagnostics.on_throttle(throttle_norm)
 
@@ -1386,14 +1432,9 @@ class ROVMainWindow(QMainWindow):
     # HEADER LABELS CẬP NHẬT
     # ----------------------------------------------------------
     def _update_header_labels(self):
-        """Cập nhật các label trên header bar."""
-        # Chỉ cập nhật telemetry table mỗi 10 frames (~6 Hz)
-        if not hasattr(self, '_telem_update_cnt'):
-            self._telem_update_cnt = 0
-        self._telem_update_cnt += 1
-        if self._telem_update_cnt >= 10:
-            self._telem_update_cnt = 0
-            self._update_telemetry_table()
+        """Cập nhật các label trên header bar. Được gọi ~6 Hz từ _on_frame."""
+        # Cập nhật telemetry table (đã throttle bởi _on_frame)
+        self._update_telemetry_table()
 
         # Link quality bar (thêm vào nhãn connection)
         q = self._link_quality
