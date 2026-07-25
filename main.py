@@ -19,6 +19,17 @@ Cách chạy:
   python main.py --connection udp:0.0.0.0:14550
   python main.py --mock          (chế độ mô phỏng offline)
 """
+import os
+from GUI.widgets.settings_dialog import SettingsDialog
+from network.slam_udp_receiver import SLAMUDPReceiver
+from network.mavlink_worker import MAVLinkWorker
+from GUI.widgets.power_widget import PowerWidget
+from GUI.widgets.gl_compass_3d_widget import GLCompass3DWidget
+from GUI.widgets.gl_3d_widget import GLROVWidget
+from core.physics_engine import PhysicsEngine
+from core.models.rov_3thruster import ROV3ThrusterModel
+from core.models.rov_6thruster import ROV6ThrusterModel
+from GUI.guirov import Ui_MainWindow
 import sys
 import math
 import time
@@ -45,23 +56,13 @@ KEY_MAP = {
 }
 
 # --- Import GUI layout ---
-import os, sys
 # Thêm thư mục gốc dự án vào path
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, 'GUI'))
 
-from GUI.guirov import Ui_MainWindow
 
 # --- Import các module tự viết ---
-from core.models.rov_6thruster import ROV6ThrusterModel
-from core.models.rov_3thruster import ROV3ThrusterModel
-from core.physics_engine import PhysicsEngine
-from GUI.widgets.gl_3d_widget import GLROVWidget
-from GUI.widgets.gl_compass_3d_widget import GLCompass3DWidget
-from GUI.widgets.power_widget import PowerWidget
-from network.mavlink_worker import MAVLinkWorker
-from network.slam_udp_receiver import SLAMUDPReceiver
 
 # Thử import input handler nếu có
 try:
@@ -121,9 +122,10 @@ ROV_MODELS = {
 # ==============================================================
 # IMPORT SETTINGS DIALOG
 # ==============================================================
-from GUI.widgets.settings_dialog import SettingsDialog
 # MAIN WINDOW
 # ==============================================================
+
+
 class ROVMainWindow(QMainWindow):
     """
     Cửa sổ chính kế thừa QMainWindow và tích hợp Ui_MainWindow.
@@ -143,27 +145,27 @@ class ROVMainWindow(QMainWindow):
 
         # --- Trạng thái ---
         self._current_model_name = "6DC"
-        self._rov_model   = None
-        self._physics     = None
-        self._mav_worker  = None
+        self._rov_model = None
+        self._physics = None
+        self._mav_worker = None
         self._slam_worker = None
-        self._input_hdlr  = None
-        self._origin_set  = False
+        self._input_hdlr = None
+        self._origin_set = False
 
         # Dữ liệu telemetry (cập nhật từ MAVLink)
-        self._roll    = 0.0   # rad
-        self._pitch   = 0.0
-        self._yaw     = 0.0
-        self._depth   = 0.0   # m
+        self._roll = 0.0   # rad
+        self._pitch = 0.0
+        self._yaw = 0.0
+        self._depth = 0.0   # m
         self._heading = 0.0   # deg
         self._pos_ned = np.zeros(3)
         self._vel_ned = np.zeros(3)
         self._voltage = 16.8
         self._current = 0.0
         self._throttle = 0.0
-        self._flight_mode  = "MANUAL"
-        self._sys_status   = "ACTIVE"
-        self._connected    = False
+        self._flight_mode = "MANUAL"
+        self._sys_status = "ACTIVE"
+        self._connected = False
         self._link_quality = 0
 
         # Telemetry table data
@@ -173,9 +175,10 @@ class ROVMainWindow(QMainWindow):
         self._ctrl = dict(surge=0., sway=0., heave=0.,
                           roll=0., pitch=0., yaw=0.)
         self._speed_scale = 1.0  # 0.25 / 0.5 / 0.75 / 1.0
-        
+
         # Biến điều khiển làm mượt và phím đang nhấn
-        self._smoothed_ctrl = dict(surge=0., sway=0., heave=0., roll=0., pitch=0., yaw=0.)
+        self._smoothed_ctrl = dict(
+            surge=0., sway=0., heave=0., roll=0., pitch=0., yaw=0.)
         self._pressed_keys = set()
 
         # ── Handles cho 5 features nâng cao ──
@@ -189,7 +192,7 @@ class ROVMainWindow(QMainWindow):
         self._diagnostics: object = None
         self._auto_track_gain: float = 0.3
         # ── Camera / Recording ──
-        self._is_recording:   bool  = False
+        self._is_recording:   bool = False
         self._video_writer:   object = None   # cv2.VideoWriter
         self._last_frame:     object = None   # np.ndarray, cập nhật mỗi frame
 
@@ -286,7 +289,8 @@ class ROVMainWindow(QMainWindow):
         # ── Feature 5: Diagnostics Engine ────────────────────────
         if HAS_DIAG:
             self._diagnostics = DiagnosticsEngine(
-                capacity_ah=float(self.settings.get('battery_capacity_ah', 15.6))
+                capacity_ah=float(self.settings.get(
+                    'battery_capacity_ah', 15.6))
             )
             self._diagnostics.sig_alert.connect(self._on_diagnostic_alert)
             self._diagnostics.sig_dive_time.connect(self._on_dive_time_update)
@@ -342,15 +346,17 @@ class ROVMainWindow(QMainWindow):
 
     def _setup_video_pipeline(self):
         """Khởi tạo video pipeline: VideoReceiver → ARHUDWidget → AIVisionProcessor."""
-        src          = self.settings.get('video_source', 'udp_h264')
-        udp_port     = int(self.settings.get('udp_video_port', 5620))
-        rtsp_url     = self.settings.get('rtsp_url', 'rtsp://192.168.2.2:8554/video')
-        webcam_idx   = int(self.settings.get('webcam_index', 0))
-        vid_file     = self.settings.get('video_file', '')
-        fps          = int(self.settings.get('video_fps', 30))
-        res_str      = self.settings.get('video_resolution', '640x480')
-        res_parts    = res_str.split('x')
-        target_w, target_h = (int(res_parts[0]), int(res_parts[1])) if len(res_parts)==2 else (640, 480)
+        src = self.settings.get('video_source', 'udp_h264')
+        udp_port = int(self.settings.get('udp_video_port', 5620))
+        rtsp_url = self.settings.get(
+            'rtsp_url', 'rtsp://192.168.2.2:8554/video')
+        webcam_idx = int(self.settings.get('webcam_index', 0))
+        vid_file = self.settings.get('video_file', '')
+        fps = int(self.settings.get('video_fps', 30))
+        res_str = self.settings.get('video_resolution', '640x480')
+        res_parts = res_str.split('x')
+        target_w, target_h = (int(res_parts[0]), int(
+            res_parts[1])) if len(res_parts) == 2 else (640, 480)
 
         # Tạo VideoReceiver theo nguồn
         if src == 'udp_h264':
@@ -390,7 +396,8 @@ class ROVMainWindow(QMainWindow):
             h_box.setContentsMargins(2, 2, 2, 2)
 
             lbl_src = QtWidgets.QLabel("Nguồn Video:")
-            lbl_src.setStyleSheet("color:#00A8FF; font-weight:bold; font-size:11px;")
+            lbl_src.setStyleSheet(
+                "color:#00A8FF; font-weight:bold; font-size:11px;")
 
             self.cb_quick_vid_src = QtWidgets.QComboBox()
             self.cb_quick_vid_src.addItems([
@@ -406,7 +413,8 @@ class ROVMainWindow(QMainWindow):
             src_key = self.settings.get('video_source', 'webcam')
             map_idx = {'webcam': 0, 'udp_h264': 1, 'rtsp': 2, 'file': 3}
             self.cb_quick_vid_src.setCurrentIndex(map_idx.get(src_key, 0))
-            self.cb_quick_vid_src.currentIndexChanged.connect(self._on_quick_video_source_changed)
+            self.cb_quick_vid_src.currentIndexChanged.connect(
+                self._on_quick_video_source_changed)
 
             h_box.addWidget(lbl_src)
             h_box.addWidget(self.cb_quick_vid_src)
@@ -416,14 +424,16 @@ class ROVMainWindow(QMainWindow):
 
             # Tạo AR HUD Widget nhúng trực tiếp vào main GUI
             self._ar_hud = ARHUDWidget(parent=self.ui.frm_simulate_camera)
-            self._ar_hud.set_hud_enabled(self.settings.get('ar_hud_enabled', True))
+            self._ar_hud.set_hud_enabled(
+                self.settings.get('ar_hud_enabled', True))
             cam_layout.addWidget(self._ar_hud)
         else:
             # Fallback tạo cửa sổ nổi nếu không tìm thấy frm_simulate_camera
             self._ar_hud = ARHUDWidget(parent=None)
             self._ar_hud.setWindowTitle("📹 Live Video + AR HUD")
             self._ar_hud.resize(target_w + 20, target_h + 60)
-            self._ar_hud.set_hud_enabled(self.settings.get('ar_hud_enabled', True))
+            self._ar_hud.set_hud_enabled(
+                self.settings.get('ar_hud_enabled', True))
 
         # Kết nối video → HUD + ghi hình
         def _on_frame_received(frame):
@@ -439,7 +449,8 @@ class ROVMainWindow(QMainWindow):
 
         self._video_rx.sig_frame.connect(_on_frame_received)
         self._video_rx.sig_connected.connect(
-            lambda ok: print(f"[Video] {'Connected' if ok else 'Disconnected'}")
+            lambda ok: print(
+                f"[Video] {'Connected' if ok else 'Disconnected'}")
         )
         self._video_rx.sig_error.connect(
             lambda e: print(f"[Video] Error: {e}")
@@ -480,7 +491,8 @@ class ROVMainWindow(QMainWindow):
             self._video_rx.set_source(VideoSource.UDP_H264, port)
             print(f"[Video] Switched to ROV UDP Stream (Port {port})")
         elif index == 2:  # RTSP
-            url = self.settings.get('rtsp_url', 'rtsp://192.168.2.2:8554/video')
+            url = self.settings.get(
+                'rtsp_url', 'rtsp://192.168.2.2:8554/video')
             self.settings['video_source'] = 'rtsp'
             self._video_rx.set_source(VideoSource.RTSP, url)
             print(f"[Video] Switched to RTSP Stream ({url})")
@@ -500,22 +512,25 @@ class ROVMainWindow(QMainWindow):
         dlg.setWindowTitle("📹 Live Camera Feed + AR HUD (Cửa sổ lớn)")
         dlg.resize(960, 600)
         lay = QtWidgets.QVBoxLayout(dlg)
-        
+
         # Nhúng AR HUD copy / view
         hud_standalone = ARHUDWidget(parent=dlg)
-        hud_standalone.set_hud_enabled(self.settings.get('ar_hud_enabled', True))
+        hud_standalone.set_hud_enabled(
+            self.settings.get('ar_hud_enabled', True))
         lay.addWidget(hud_standalone)
-        
+
         # Kết nối frame
         if self._video_rx:
             self._video_rx.sig_frame.connect(hud_standalone.set_frame)
             if self._ai_proc:
-                self._ai_proc.sig_detections.connect(hud_standalone.set_detections)
-                
+                self._ai_proc.sig_detections.connect(
+                    hud_standalone.set_detections)
+
         def _on_close(event):
             if self._video_rx:
                 try:
-                    self._video_rx.sig_frame.disconnect(hud_standalone.set_frame)
+                    self._video_rx.sig_frame.disconnect(
+                        hud_standalone.set_frame)
                 except Exception:
                     pass
             self._popout_dialog = None
@@ -529,6 +544,9 @@ class ROVMainWindow(QMainWindow):
         """Khởi tạo AI detection processor và control panel."""
         if not HAS_AI:
             return
+        if self._ai_proc is not None:
+            return  # Tránh tạo trùng lặp và lặp signal connection
+
         model_path = self.settings.get('ai_model_path', 'yolov8n.pt')
         self._ai_proc = AIVisionProcessor(
             model_path=model_path,
@@ -546,30 +564,62 @@ class ROVMainWindow(QMainWindow):
         # AI control panel (cửa sổ nổi)
         self._ai_panel = AIControlPanel(parent=None)
         self._ai_panel.setWindowTitle("🤖 AI Vision Control")
-        self._ai_panel.sig_detection_enabled.connect(self._on_ai_detection_toggle)
-        self._ai_panel.sig_model_changed.connect(self._ai_proc.set_model_path if hasattr(self._ai_proc, 'set_model_path') else lambda x: None)
-        self._ai_panel.sig_confidence_changed.connect(self._ai_proc.set_confidence)
-        self._ai_panel.sig_auto_track_enabled.connect(self._ai_proc.set_auto_track)
-        self._ai_panel.sig_track_class_changed.connect(self._ai_proc.set_tracking_target)
+        self._ai_panel.sig_detection_enabled.connect(
+            self._on_ai_detection_toggle)
+        self._ai_panel.sig_model_changed.connect(self._ai_proc.set_model_path if hasattr(
+            self._ai_proc, 'set_model_path') else lambda x: None)
+        self._ai_panel.sig_confidence_changed.connect(
+            self._ai_proc.set_confidence)
+        self._ai_panel.sig_auto_track_enabled.connect(
+            self._ai_proc.set_auto_track)
+        self._ai_panel.sig_track_class_changed.connect(
+            self._ai_proc.set_tracking_target)
         self._ai_panel.sig_track_gain_changed.connect(
             lambda g: setattr(self, '_auto_track_gain', g)
         )
         self._ai_proc.sig_fps.connect(
             lambda fps: self._ai_panel.update_stats(fps, 0, -1)
         )
+        self._ai_proc.sig_model_loaded.connect(self._on_ai_model_loaded)
         self._ai_proc.start()
+
+    def _on_ai_model_loaded(self, ok: bool, msg: str):
+        print(f"[AI] Model status: {msg}")
+        if not ok:
+            QtWidgets.QMessageBox.warning(
+                self, "AI Load Warning",
+                f"Không thể chạy YOLOv8 AI: {msg}\n\n"
+                "Hãy đảm bảo bạn đã cài đặt ultralytics:\n"
+                "pip install ultralytics"
+            )
+
+    def _on_ai_detection_toggle(self, enabled: bool):
+        if not HAS_AI:
+            return
+        if enabled:
+            if self._ai_proc is None:
+                self._setup_ai_pipeline()
+            elif not self._ai_proc.isRunning():
+                self._ai_proc.start()
+        else:
+            if self._ai_proc and self._ai_proc.isRunning():
+                self._ai_proc.stop()
+            if self._ar_hud:
+                self._ar_hud.set_detections([])
 
     # ── Diagnostic Alert Handler ──────────────────────────────────
     def _on_diagnostic_alert(self, level: str, message: str):
         """Nhận cảnh báo từ DiagnosticsEngine → hiển thị trong PowerWidget."""
-        self.power_widget.add_alert(level, message)
+        if hasattr(self, 'power_widget') and self.power_widget:
+            self.power_widget.add_alert(level, message)
         # CRITICAL: cũng hiển thị trên AR HUD nếu đang mở
         if self._ar_hud and level == 'CRITICAL':
             self._ar_hud.set_warning(message, level)
 
     def _on_dive_time_update(self, minutes: float):
         """Nhận dive time từ DiagnosticsEngine → hiển thị trong PowerWidget."""
-        self.power_widget.set_dive_time(minutes)
+        if hasattr(self, 'power_widget') and self.power_widget:
+            self.power_widget.set_dive_time(minutes)
 
     # ── Seafloor Mesh Handler ─────────────────────────────────────
     def _on_seafloor_mesh_updated(self):
@@ -587,16 +637,9 @@ class ROVMainWindow(QMainWindow):
         if not self._connected:
             return
         gain = self._auto_track_gain
-        self._ctrl['yaw']   = max(-1.0, min(1.0, dx * gain))
+        self._ctrl['yaw'] = max(-1.0, min(1.0, dx * gain))
         self._ctrl['pitch'] = max(-1.0, min(1.0, dy * gain))
         self._send_mavlink_control()
-
-    def _on_ai_detection_toggle(self, enabled: bool):
-        if self._ai_proc:
-            if enabled:
-                self._ai_proc.start() if not self._ai_proc.isRunning() else None
-            else:
-                self._ai_proc.stop()
 
     def _inject_telemetry_table(self):
         """
@@ -642,27 +685,38 @@ class ROVMainWindow(QMainWindow):
 
         # Các phím bấm trên giao diện GUI - đồng bộ trực tiếp với set phím bấm để điều khiển mượt mà
         self.ui.pbtn_up.pressed.connect(lambda: self._gui_press("key_forward"))
-        self.ui.pbtn_up.released.connect(lambda: self._gui_release("key_forward"))
-        
-        self.ui.pbtn_down.pressed.connect(lambda: self._gui_press("key_backward"))
-        self.ui.pbtn_down.released.connect(lambda: self._gui_release("key_backward"))
-        
+        self.ui.pbtn_up.released.connect(
+            lambda: self._gui_release("key_forward"))
+
+        self.ui.pbtn_down.pressed.connect(
+            lambda: self._gui_press("key_backward"))
+        self.ui.pbtn_down.released.connect(
+            lambda: self._gui_release("key_backward"))
+
         self.ui.pbtn_left.pressed.connect(lambda: self._gui_press("key_left"))
-        self.ui.pbtn_left.released.connect(lambda: self._gui_release("key_left"))
-        
-        self.ui.pbtn_right.pressed.connect(lambda: self._gui_press("key_right"))
-        self.ui.pbtn_right.released.connect(lambda: self._gui_release("key_right"))
-        
+        self.ui.pbtn_left.released.connect(
+            lambda: self._gui_release("key_left"))
+
+        self.ui.pbtn_right.pressed.connect(
+            lambda: self._gui_press("key_right"))
+        self.ui.pbtn_right.released.connect(
+            lambda: self._gui_release("key_right"))
+
         self.ui.pbtn_stop.clicked.connect(self._emergency_stop)
 
         # Điều khiển độ sâu trên GUI
-        self.ui.pbtn_control_depth_increase.pressed.connect(lambda: self._gui_press("key_ascend"))
-        self.ui.pbtn_control_depth_increase.released.connect(lambda: self._gui_release("key_ascend"))
-        
-        self.ui.pbtn_control_depth_decrease.pressed.connect(lambda: self._gui_press("key_descend"))
-        self.ui.pbtn_control_depth_decrease.released.connect(lambda: self._gui_release("key_descend"))
-        
-        self.ui.pushButton.clicked.connect(self._emergency_stop)  # Nút STOP khẩn cấp
+        self.ui.pbtn_control_depth_increase.pressed.connect(
+            lambda: self._gui_press("key_ascend"))
+        self.ui.pbtn_control_depth_increase.released.connect(
+            lambda: self._gui_release("key_ascend"))
+
+        self.ui.pbtn_control_depth_decrease.pressed.connect(
+            lambda: self._gui_press("key_descend"))
+        self.ui.pbtn_control_depth_decrease.released.connect(
+            lambda: self._gui_release("key_descend"))
+
+        self.ui.pushButton.clicked.connect(
+            self._emergency_stop)  # Nút STOP khẩn cấp
 
         # Speed control
         self.ui.pbtn_speed_increase.clicked.connect(self._speed_up)
@@ -675,7 +729,8 @@ class ROVMainWindow(QMainWindow):
         self.ui.pbtn_led_decrease.clicked.connect(
             lambda: self._mav_lights(False))
         self.ui.pushButton_3.clicked.connect(self._toggle_arm)  # ARM button
-        self.ui.pbtn_camera.clicked.connect(self._on_camera_button)  # Camera/Record
+        self.ui.pbtn_camera.clicked.connect(
+            self._on_camera_button)  # Camera/Record
 
     # ----------------------------------------------------------
     # KHỞI TẠO MODEL ROV
@@ -722,7 +777,8 @@ class ROVMainWindow(QMainWindow):
         self._physics = PhysicsEngine(self._rov_model)
 
         # Tự động quét tìm file CAD mô hình 3D trong thư mục dự án
-        cad_file = self.find_cad_file(model_name) or self.settings.get("cad_file", "") or None
+        cad_file = self.find_cad_file(
+            model_name) or self.settings.get("cad_file", "") or None
 
         # Cập nhật các 3D widget
         self.gl_3d.set_model(self._rov_model, cad_file)
@@ -785,7 +841,8 @@ class ROVMainWindow(QMainWindow):
         # Áp dụng bộ lọc thông thấp (low-pass filter) làm mượt tín hiệu điều khiển tránh giật động cơ
         alpha = 0.22  # Hệ số làm mượt
         for k in self._ctrl:
-            self._smoothed_ctrl[k] = self._smoothed_ctrl[k] * (1 - alpha) + self._ctrl[k] * alpha
+            self._smoothed_ctrl[k] = self._smoothed_ctrl[k] * \
+                (1 - alpha) + self._ctrl[k] * alpha
 
         # 2. Áp điều khiển đã được làm mượt
         if not self._connected:
@@ -803,27 +860,28 @@ class ROVMainWindow(QMainWindow):
         if state is None:
             return
 
-        pos  = state["position"]
+        pos = state["position"]
         quat = state["orientation_quat"]  # [qx, qy, qz, qw]
 
         # 4. Nếu đang kết nối, dùng dữ liệu MAVLink thay cho physics
         if self._connected:
-            pos  = self._pos_ned
+            pos = self._pos_ned
             # Chuyển Euler → Quaternion
             quat = self._euler_to_quat(self._roll, self._pitch, self._yaw)
 
         # 5. Cập nhật 3D widget (kèm dữ liệu HUD)
-        vel_now  = self._vel_ned if self._connected else np.array(state.get("linear_velocity", [0,0,0]))
-        spd_now  = float(np.linalg.norm(vel_now))
-        roll_deg  = math.degrees(self._roll)
+        vel_now = self._vel_ned if self._connected else np.array(
+            state.get("linear_velocity", [0, 0, 0]))
+        spd_now = float(np.linalg.norm(vel_now))
+        roll_deg = math.degrees(self._roll)
         pitch_deg = math.degrees(self._pitch)
         self.gl_3d.update_pose(
             pos, quat,
-            heading_deg = self._heading,
-            depth_m     = self._depth,
-            speed_mps   = spd_now,
-            roll_deg    = roll_deg,
-            pitch_deg   = pitch_deg,
+            heading_deg=self._heading,
+            depth_m=self._depth,
+            speed_mps=spd_now,
+            roll_deg=roll_deg,
+            pitch_deg=pitch_deg,
         )
 
         # 6. Cập nhật trajectory
@@ -836,7 +894,8 @@ class ROVMainWindow(QMainWindow):
         self.gl_3d.update_fov_effect(self._heading)
 
         # 8. Cập nhật la bàn 3D (Compass 3D) và Radar Point Cloud
-        vel = self._vel_ned if self._connected else np.array(state.get("linear_velocity", [0,0,0]))
+        vel = self._vel_ned if self._connected else np.array(
+            state.get("linear_velocity", [0, 0, 0]))
         self.compass_3d.update_state(quat, vel, depth=self._depth)
 
         # 9. Cập nhật Power widget
@@ -863,8 +922,9 @@ class ROVMainWindow(QMainWindow):
             # Kích hoạt physics inject khi nhận pose đầu tiên
             pass
         color = "#00FF66" if connected else "#FF4040"
-        text  = "STRONG" if connected else "DISCONNECTED"
-        self.ui.lbl_connection_value.setStyleSheet(f"color:{color};font-weight:bold;")
+        text = "STRONG" if connected else "DISCONNECTED"
+        self.ui.lbl_connection_value.setStyleSheet(
+            f"color:{color};font-weight:bold;")
         self.ui.lbl_connection_value.setText(text)
         # Bật inject external pose nếu kết nối
         if self._physics:
@@ -876,15 +936,15 @@ class ROVMainWindow(QMainWindow):
 
     def _on_heartbeat(self, mode: str, status: str):
         self._flight_mode = mode
-        self._sys_status  = status
+        self._sys_status = status
         self.ui.lbl_mode_value.setText(mode)
         self.ui.lbl_status_value.setText(status)
 
     def _on_attitude(self, roll: float, pitch: float, yaw: float):
         """Nhận ATTITUDE từ MAVLink (rad)."""
-        self._roll  = roll
+        self._roll = roll
         self._pitch = pitch
-        self._yaw   = yaw
+        self._yaw = yaw
         self._heading = math.degrees(yaw) % 360.0
 
     def _on_position_ned(self, x, y, z, vx, vy, vz):
@@ -900,8 +960,8 @@ class ROVMainWindow(QMainWindow):
                 self._origin_set = True
 
     def _on_vfr_hud(self, depth: float, heading: float, throttle: float):
-        self._depth    = depth
-        self._heading  = heading
+        self._depth = depth
+        self._heading = heading
         self._throttle = throttle
 
     def _on_sys_status(self, volt: float, curr: float, remain: int):
@@ -935,7 +995,8 @@ class ROVMainWindow(QMainWindow):
             self._diagnostics.on_water_temp(value)
 
     def _on_cmd_ack(self, command: int, result: int):
-        result_str = {0: "OK", 1: "FAILED", 4: "DENIED"}.get(result, str(result))
+        result_str = {0: "OK", 1: "FAILED",
+                      4: "DENIED"}.get(result, str(result))
         print(f"[MAVLink] CMD ACK: command={command} result={result_str}")
 
     def _on_slam_points(self, pts: np.ndarray):
@@ -957,18 +1018,18 @@ class ROVMainWindow(QMainWindow):
         # ── Feature 1: Update AR HUD telemetry ───────────────────
         if self._ar_hud:
             self._ar_hud.update_telemetry(
-                roll     = self._roll,
-                pitch    = self._pitch,
-                yaw      = self._yaw,
-                depth    = self._depth,
-                heading  = self._heading,
-                speed    = float(np.linalg.norm(self._vel_ned)),
-                voltage  = self._voltage,
-                current  = self._current,
-                pct      = int(self._current),
-                signal_pct = self._link_quality,
-                mode     = self._flight_mode,
-                armed    = 'ARMED' in self._sys_status.upper()
+                roll=self._roll,
+                pitch=self._pitch,
+                yaw=self._yaw,
+                depth=self._depth,
+                heading=self._heading,
+                speed=float(np.linalg.norm(self._vel_ned)),
+                voltage=self._voltage,
+                current=self._current,
+                pct=int(self._current),
+                signal_pct=self._link_quality,
+                mode=self._flight_mode,
+                armed='ARMED' in self._sys_status.upper()
             )
 
     # ----------------------------------------------------------
@@ -976,12 +1037,18 @@ class ROVMainWindow(QMainWindow):
     # ----------------------------------------------------------
     def _set_ctrl(self, surge=None, sway=None, heave=None,
                   roll=None, pitch=None, yaw=None):
-        if surge is not None: self._ctrl["surge"] = surge
-        if sway  is not None: self._ctrl["sway"]  = sway
-        if heave is not None: self._ctrl["heave"] = heave
-        if roll  is not None: self._ctrl["roll"]  = roll
-        if pitch is not None: self._ctrl["pitch"] = pitch
-        if yaw   is not None: self._ctrl["yaw"]   = yaw
+        if surge is not None:
+            self._ctrl["surge"] = surge
+        if sway is not None:
+            self._ctrl["sway"] = sway
+        if heave is not None:
+            self._ctrl["heave"] = heave
+        if roll is not None:
+            self._ctrl["roll"] = roll
+        if pitch is not None:
+            self._ctrl["pitch"] = pitch
+        if yaw is not None:
+            self._ctrl["yaw"] = yaw
         # Gửi lệnh MAVLink khi kết nối
         if self._connected and self._mav_worker:
             self._send_mavlink_control()
@@ -989,9 +1056,9 @@ class ROVMainWindow(QMainWindow):
     def _send_mavlink_control(self):
         """Chuyển đổi ctrl [-1,1] → MANUAL_CONTROL [-1000, 1000]."""
         x = int(self._ctrl["surge"] * 1000)
-        y = int(self._ctrl["sway"]  * 1000)
+        y = int(self._ctrl["sway"] * 1000)
         z = int((self._ctrl["heave"] + 1.0) * 500)   # 0-1000, 500=neutral
-        r = int(self._ctrl["yaw"]   * 1000)
+        r = int(self._ctrl["yaw"] * 1000)
         self._mav_worker.send_manual_control(x, y, z, r, 0)
 
     def _emergency_stop(self):
@@ -1056,12 +1123,13 @@ class ROVMainWindow(QMainWindow):
         try:
             import cv2
             import time as _t
-            ts   = _t.strftime("%Y%m%d_%H%M%S")
+            ts = _t.strftime("%Y%m%d_%H%M%S")
             path = os.path.join(self._get_media_dir(), f"snap_{ts}.png")
             cv2.imwrite(path, self._last_frame)
             print(f"[Camera] Snapshot saved: {path}")
             # Hiển thị thông báo nhỏ
-            self.ui.pbtn_camera.setToolTip(f"Snapshot: {os.path.basename(path)}")
+            self.ui.pbtn_camera.setToolTip(
+                f"Snapshot: {os.path.basename(path)}")
             # Hỏi có muốn bắt đầu ghi video không
             reply = QtWidgets.QMessageBox.question(
                 self, "📸 Snapshot đã lưu",
@@ -1079,11 +1147,12 @@ class ROVMainWindow(QMainWindow):
         if self._last_frame is None:
             return
         try:
-            import cv2, time as _t
-            ts   = _t.strftime("%Y%m%d_%H%M%S")
+            import cv2
+            import time as _t
+            ts = _t.strftime("%Y%m%d_%H%M%S")
             path = os.path.join(self._get_media_dir(), f"rec_{ts}.mp4")
             h, w = self._last_frame.shape[:2]
-            fps  = int(self.settings.get('video_fps', 30))
+            fps = int(self.settings.get('video_fps', 30))
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             self._video_writer = cv2.VideoWriter(path, fourcc, fps, (w, h))
             self._is_recording = True
@@ -1092,7 +1161,8 @@ class ROVMainWindow(QMainWindow):
                 "QPushButton { border: 2px solid #FF4040; color: #FF4040; "
                 "background: rgba(255,0,0,0.1); border-radius:4px; }"
             )
-            self.ui.pbtn_camera.setToolTip(f"Recording... Click để dừng. File: {os.path.basename(path)}")
+            self.ui.pbtn_camera.setToolTip(
+                f"Recording... Click để dừng. File: {os.path.basename(path)}")
             print(f"[Camera] Recording started: {path}")
         except Exception as e:
             self._is_recording = False
@@ -1120,14 +1190,50 @@ class ROVMainWindow(QMainWindow):
         dlg = SettingsDialog(self.settings, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.settings.update(dlg.settings)
-            # Áp dụng cài đặt mới
-            self._stop_workers()
-            self._start_workers()
-            # Cập nhật lại mô hình 3D (tự động load CAD nếu có)
-            cad_file = self.find_cad_file(self._current_model_name)
-            self.gl_3d.set_model(self._rov_model, cad_file)
-            self.compass_3d.set_model(self._rov_model, cad_file)
-            print(f"[Settings] Saved: {self.settings}")
+            self._apply_updated_settings()
+            print(f"[Settings] Saved & applied dynamically: {self.settings}")
+
+    def _apply_updated_settings(self):
+        """
+        Áp dụng cài đặt mới động trực tiếp mà KHÔNG reset vị trí,
+        KHÔNG dừng các worker đang chạy và KHÔNG gián đoạn hoạt động.
+        """
+        # 1. Cập nhật Video Receiver nếu có
+        if self._video_rx:
+            src = self.settings.get('video_source', 'webcam')
+            if src == 'udp_h264':
+                port = int(self.settings.get('udp_video_port', 5620))
+                self._video_rx.set_source(VideoSource.UDP_H264, port)
+            elif src == 'webcam':
+                idx = int(self.settings.get('webcam_index', 0))
+                self._video_rx.set_source(VideoSource.WEBCAM, idx)
+            elif src == 'rtsp':
+                url = self.settings.get(
+                    'rtsp_url', 'rtsp://192.168.2.2:8554/video')
+                self._video_rx.set_source(VideoSource.RTSP, url)
+            elif src == 'file':
+                path = self.settings.get('video_file', '')
+                self._video_rx.set_source(VideoSource.FILE, path)
+
+            # Đồng bộ lại ComboBox chọn nhanh nguồn video
+            if hasattr(self, 'cb_quick_vid_src'):
+                map_idx = {'webcam': 0, 'udp_h264': 1, 'rtsp': 2, 'file': 3}
+                self.cb_quick_vid_src.blockSignals(True)
+                self.cb_quick_vid_src.setCurrentIndex(map_idx.get(src, 0))
+                self.cb_quick_vid_src.blockSignals(False)
+
+        # 2. Cập nhật AR HUD Overlay
+        if self._ar_hud:
+            self._ar_hud.set_hud_enabled(
+                self.settings.get('ar_hud_enabled', True))
+
+        # 3. Cập nhật AI Vision Processor
+        ai_enabled = self.settings.get('ai_detection_enabled', False)
+        if HAS_AI:
+            if ai_enabled and not self._ai_proc:
+                self._setup_ai_pipeline()
+            elif self._ai_proc:
+                self._on_ai_detection_toggle(ai_enabled)
 
     # ----------------------------------------------------------
     # TELEMETRY TABLE
@@ -1178,7 +1284,7 @@ class ROVMainWindow(QMainWindow):
             name_item = QTableWidgetItem(name)
             name_item.setForeground(QtGui.QBrush(QtGui.QColor(91, 116, 142)))
             table.setItem(row, 0, name_item)
-            
+
             if key == "GPS_MAP":
                 val_item = QTableWidgetItem("Click to view Map")
                 # Vẽ chữ gạch chân màu xanh liên kết
@@ -1189,7 +1295,7 @@ class ROVMainWindow(QMainWindow):
             else:
                 val_item = QTableWidgetItem("—")
                 val_item.setForeground(QtGui.QBrush(QtGui.QColor(0, 168, 255)))
-                
+
             table.setItem(row, 1, val_item)
             unit_item = QTableWidgetItem(unit)
             unit_item.setForeground(QtGui.QBrush(QtGui.QColor(91, 116, 142)))
@@ -1341,23 +1447,39 @@ class ROVMainWindow(QMainWindow):
         yaw = 0.0
 
         # Ánh xạ phím động từ cài đặt
-        key_fwd  = KEY_MAP.get(self.settings.get("key_forward", "W"), Qt.Key.Key_W)
-        key_bwd  = KEY_MAP.get(self.settings.get("key_backward", "S"), Qt.Key.Key_S)
-        key_left = KEY_MAP.get(self.settings.get("key_left", "A"), Qt.Key.Key_A)
-        key_right= KEY_MAP.get(self.settings.get("key_right", "D"), Qt.Key.Key_D)
-        key_sw_l = KEY_MAP.get(self.settings.get("key_sway_left", "Q"), Qt.Key.Key_Q)
-        key_sw_r = KEY_MAP.get(self.settings.get("key_sway_right", "E"), Qt.Key.Key_E)
-        key_asc  = KEY_MAP.get(self.settings.get("key_ascend", "R"), Qt.Key.Key_R)
-        key_desc = KEY_MAP.get(self.settings.get("key_descend", "F"), Qt.Key.Key_F)
+        key_fwd = KEY_MAP.get(self.settings.get(
+            "key_forward", "W"), Qt.Key.Key_W)
+        key_bwd = KEY_MAP.get(self.settings.get(
+            "key_backward", "S"), Qt.Key.Key_S)
+        key_left = KEY_MAP.get(self.settings.get(
+            "key_left", "A"), Qt.Key.Key_A)
+        key_right = KEY_MAP.get(self.settings.get(
+            "key_right", "D"), Qt.Key.Key_D)
+        key_sw_l = KEY_MAP.get(self.settings.get(
+            "key_sway_left", "Q"), Qt.Key.Key_Q)
+        key_sw_r = KEY_MAP.get(self.settings.get(
+            "key_sway_right", "E"), Qt.Key.Key_E)
+        key_asc = KEY_MAP.get(self.settings.get(
+            "key_ascend", "R"), Qt.Key.Key_R)
+        key_desc = KEY_MAP.get(self.settings.get(
+            "key_descend", "F"), Qt.Key.Key_F)
 
-        if key_fwd in self._pressed_keys:   surge += sp
-        if key_bwd in self._pressed_keys:   surge -= sp
-        if key_sw_l in self._pressed_keys:  sway -= sp
-        if key_sw_r in self._pressed_keys:  sway += sp
-        if key_asc in self._pressed_keys:   heave += sp
-        if key_desc in self._pressed_keys:  heave -= sp
-        if key_left in self._pressed_keys:  yaw -= sp
-        if key_right in self._pressed_keys: yaw += sp
+        if key_fwd in self._pressed_keys:
+            surge += sp
+        if key_bwd in self._pressed_keys:
+            surge -= sp
+        if key_sw_l in self._pressed_keys:
+            sway -= sp
+        if key_sw_r in self._pressed_keys:
+            sway += sp
+        if key_asc in self._pressed_keys:
+            heave += sp
+        if key_desc in self._pressed_keys:
+            heave -= sp
+        if key_left in self._pressed_keys:
+            yaw -= sp
+        if key_right in self._pressed_keys:
+            yaw += sp
 
         self._set_ctrl(surge=surge, sway=sway, heave=heave, yaw=yaw)
 
@@ -1387,12 +1509,13 @@ class ROVMainWindow(QMainWindow):
                         "Roll (deg)", "Pitch (deg)", "Yaw (deg)", "Depth (m)", "Heading (deg)",
                         "Voltage (V)", "Current (A)", "X (m)", "Y (m)", "Z (m)"
                     ])
-                
+
                 from datetime import datetime
                 time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 writer.writerow([
                     time.time(), time_str, self._flight_mode, self._sys_status,
-                    math.degrees(self._roll), math.degrees(self._pitch), math.degrees(self._yaw),
+                    math.degrees(self._roll), math.degrees(
+                        self._pitch), math.degrees(self._yaw),
                     self._depth, self._heading, self._voltage, self._current,
                     self._pos_ned[0], self._pos_ned[1], self._pos_ned[2]
                 ])
@@ -1480,7 +1603,7 @@ def main():
         "key_left":      "A",
         "key_right":     "D",
         "key_sway_left": "Q",
-        "key_sway_right":"E",
+        "key_sway_right": "E",
         "key_ascend":    "R",
         "key_descend":   "F",
         "enable_imu_gamepad": False,

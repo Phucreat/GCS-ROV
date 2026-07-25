@@ -147,7 +147,13 @@ class AIVisionProcessor(QThread):
         # Auto-track state
         self._auto_track: bool = False
         self._tracking_class: Optional[str] = None   # class to auto-track
+        # Auto-track state
+        self._auto_track: bool = False
+        self._tracking_class: Optional[str] = None   # class to auto-track
         self._locked_track_id: int = -1              # ByteTrack ID being followed
+
+        # Non-blocking busy flag to prevent frame queue buildup & video stalling
+        self._is_busy: bool = False
 
         # FPS sliding window (timestamps of the last N completed inferences)
         self._ts_window: deque = deque(maxlen=_FPS_WINDOW)
@@ -161,22 +167,17 @@ class AIVisionProcessor(QThread):
     def submit_frame(self, frame: np.ndarray) -> None:
         """
         Put a frame into the inference queue.
-        Non-blocking: if the queue is full the oldest frame is discarded
-        and the new one is pushed, keeping latency low.
+        Non-blocking & drop-if-busy: if the AI is currently processing a frame
+        or the queue is full, the incoming frame is instantly skipped.
+        This guarantees the video stream stays at 30 FPS without freezing.
         """
-        if not self._running:
+        if not self._running or self._is_busy:
             return
-        try:
-            self._frame_queue.put_nowait(frame)
-        except queue.Full:
+        if self._frame_queue.empty():
             try:
-                self._frame_queue.get_nowait()   # discard stale frame
-            except queue.Empty:
+                self._frame_queue.put_nowait(frame.copy())
+            except Exception:
                 pass
-            try:
-                self._frame_queue.put_nowait(frame)
-            except queue.Full:
-                pass  # give up silently
 
     def set_tracking_target(self, class_name: str) -> None:
         """Select the class to auto-track (single class only)."""
@@ -210,9 +211,9 @@ class AIVisionProcessor(QThread):
         # Unblock the queue.get() call so the thread can exit promptly
         try:
             self._frame_queue.put_nowait(None)   # sentinel value
-        except queue.Full:
+        except Exception:
             pass
-        self.wait()
+        self.wait(2000)
 
     # ------------------------------------------------------------------ #
     #  QThread.run()                                                       #
@@ -221,30 +222,38 @@ class AIVisionProcessor(QThread):
         """Main inference loop – executed in a separate OS thread."""
         self._running = True
 
-        # ── Lazy import of ultralytics ────────────────────────────────── #
+        # Limit PyTorch CPU threads so inference doesn't saturate all cores & freeze GUI/video
         try:
-            from ultralytics import YOLO  # type: ignore
-            self._model = YOLO(self._model_path)
-            # Warm-up run to JIT-compile and pre-allocate GPU memory
-            dummy = np.zeros((640, 640, 3), dtype=np.uint8)
-            self._model.predict(dummy, verbose=False, device=self._device)
-            self.sig_model_loaded.emit(True, f"Model loaded: {self._model_path}")
-        except ImportError:
-            self.sig_model_loaded.emit(
-                False,
-                "ultralytics not installed – pip install ultralytics",
-            )
-            self._running = False
-            return
-        except Exception as exc:  # model file not found etc.
-            self.sig_model_loaded.emit(False, f"Model load error: {exc}")
-            self._running = False
-            return
+            import torch
+            torch.set_num_threads(2)
+        except Exception:
+            pass
+
+        # ── Lazy import of ultralytics ────────────────────────────────── #
+        if self._model is None:
+            try:
+                from ultralytics import YOLO  # type: ignore
+                self._model = YOLO(self._model_path)
+                # Warm-up run to JIT-compile and pre-allocate memory
+                dummy = np.zeros((320, 320, 3), dtype=np.uint8)
+                self._model.predict(dummy, verbose=False, device=self._device, imgsz=320)
+                self.sig_model_loaded.emit(True, f"Model loaded: {self._model_path}")
+            except ImportError:
+                self.sig_model_loaded.emit(
+                    False,
+                    "ultralytics not installed – pip install ultralytics",
+                )
+                self._running = False
+                return
+            except Exception as exc:  # model file not found etc.
+                self.sig_model_loaded.emit(False, f"Model load error: {exc}")
+                self._running = False
+                return
 
         # ── Inference loop ────────────────────────────────────────────── #
         while self._running:
             try:
-                frame = self._frame_queue.get(timeout=0.5)
+                frame = self._frame_queue.get(timeout=0.2)
             except queue.Empty:
                 continue
 
@@ -252,33 +261,34 @@ class AIVisionProcessor(QThread):
             if frame is None:
                 break
 
+            self._is_busy = True
             t_start = time.perf_counter()
 
             try:
                 detections = self._infer(frame)
+                t_end = time.perf_counter()
+
+                # ── FPS tracking ──────────────────────────────────────────── #
+                self._ts_window.append(t_end - t_start)
+                if len(self._ts_window) >= 2:
+                    avg_dt = sum(self._ts_window) / len(self._ts_window)
+                    fps = 1.0 / avg_dt if avg_dt > 0 else 0.0
+                else:
+                    fps = 0.0
+                self.sig_fps.emit(fps)
+
+                # ── Emit detections ──────────────────────────────────────── #
+                self.sig_detections.emit(detections)
+
+                # ── Auto-track error ─────────────────────────────────────── #
+                if self._auto_track:
+                    dx, dy = self._compute_track_error(detections)
+                    self.sig_track_error.emit(dx, dy)
+
             except Exception as exc:  # noqa: BLE001
-                # Don't crash the thread on a single bad frame
                 print(f"[AIVisionProcessor] Inference error: {exc}")
-                continue
-
-            t_end = time.perf_counter()
-
-            # ── FPS tracking ──────────────────────────────────────────── #
-            self._ts_window.append(t_end - t_start)
-            if len(self._ts_window) >= 2:
-                avg_dt = sum(self._ts_window) / len(self._ts_window)
-                fps = 1.0 / avg_dt if avg_dt > 0 else 0.0
-            else:
-                fps = 0.0
-            self.sig_fps.emit(fps)
-
-            # ── Emit detections ──────────────────────────────────────── #
-            self.sig_detections.emit(detections)
-
-            # ── Auto-track error ─────────────────────────────────────── #
-            if self._auto_track:
-                dx, dy = self._compute_track_error(detections)
-                self.sig_track_error.emit(dx, dy)
+            finally:
+                self._is_busy = False
 
         self._running = False
 
@@ -299,6 +309,7 @@ class AIVisionProcessor(QThread):
                 persist=True,
                 conf=self._conf,
                 device=self._device,
+                imgsz=320,
                 verbose=False,
             )
         else:
@@ -306,6 +317,7 @@ class AIVisionProcessor(QThread):
                 frame,
                 conf=self._conf,
                 device=self._device,
+                imgsz=320,
                 verbose=False,
             )
 
