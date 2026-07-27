@@ -52,7 +52,8 @@ class CameraMode:
     FOLLOW   = 0
     ORBIT    = 1
     MAP      = 2
-    LABELS   = {FOLLOW: "FOLLOW", ORBIT: "ORBIT", MAP: "MAP"}
+    MANUAL   = 3
+    LABELS   = {FOLLOW: "FOLLOW", ORBIT: "ORBIT", MAP: "MAP", MANUAL: "MANUAL"}
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -544,12 +545,16 @@ class GLROVWidget(gl.GLViewWidget):
 
     def mouseReleaseEvent(self, ev):
         if ev.button() == QtCore.Qt.MouseButton.LeftButton:
-            # Đặt timer: sau USER_CAM_TIMEOUT ms mới follow lại
-            self._cam_resume_timer.start(self.USER_CAM_TIMEOUT)
+            # MANUAL mode: không bao giờ tự resume camera
+            if self._cam_mode != CameraMode.MANUAL:
+                self._cam_resume_timer.start(self.USER_CAM_TIMEOUT)
         super().mouseReleaseEvent(ev)
 
     def _on_cam_resume(self):
         """Timer callback: hết timeout → camera follow lại."""
+        # Không resume nếu đang ở chế độ MANUAL
+        if self._cam_mode == CameraMode.MANUAL:
+            return
         self._user_ctrl = False
         self._hud.update_data(user_ctrl=False)
 
@@ -719,6 +724,7 @@ class GLROVWidget(gl.GLViewWidget):
         a_follow  = menu.addAction("📹  FOLLOW — Bám theo ROV")
         a_orbit   = menu.addAction("🔄  ORBIT  — Xoay cinematic")
         a_map     = menu.addAction("🗺   MAP    — Nhìn từ trên")
+        a_manual  = menu.addAction("🖐  MANUAL — Tự do điều khiển")
         menu.addSeparator()
         a_reset   = menu.addAction("🎯  Reset gốc tọa độ")
         a_clear   = menu.addAction("🗑   Xóa quỹ đạo")
@@ -729,7 +735,8 @@ class GLROVWidget(gl.GLViewWidget):
 
         for a, m in [(a_follow, CameraMode.FOLLOW),
                      (a_orbit,  CameraMode.ORBIT),
-                     (a_map,    CameraMode.MAP)]:
+                     (a_map,    CameraMode.MAP),
+                     (a_manual, CameraMode.MANUAL)]:
             a.setCheckable(True)
             a.setChecked(self._cam_mode == m)
 
@@ -742,6 +749,10 @@ class GLROVWidget(gl.GLViewWidget):
             self._orbit_yaw = self._get_azimuth()
         elif act == a_map:
             self._cam_mode = CameraMode.MAP
+        elif act == a_manual:
+            self._cam_mode = CameraMode.MANUAL
+            self._user_ctrl = False          # reset flag, MANUAL tự xử lý
+            self._cam_resume_timer.stop()    # dừng timer resume
         elif act == a_reset:
             self.reset_origin()
         elif act == a_clear:
@@ -954,6 +965,8 @@ class GLROVWidget(gl.GLViewWidget):
     def _update_camera(self, gl_pos):
         if self._user_ctrl:
             return   # User đang xoay tay → không override camera
+        if self._cam_mode == CameraMode.MANUAL:
+            return   # MANUAL mode: camera hoàn toàn do user điều khiển
 
         alpha = 0.07
         self._cam_lerp_pos = (self._cam_lerp_pos*(1-alpha) + gl_pos*alpha).astype(np.float32)
@@ -1151,6 +1164,13 @@ class GLROVWidget(gl.GLViewWidget):
     def set_follow_mode(self, enabled: bool):
         self._cam_mode = CameraMode.FOLLOW if enabled else CameraMode.ORBIT
         self._hud.update_data(cam_mode=CameraMode.LABELS[self._cam_mode])
+
+    def set_camera_mode(self, mode: int):
+        """Public API để đặt camera mode: FOLLOW/ORBIT/MAP/MANUAL."""
+        self._cam_mode = mode
+        if mode == CameraMode.MANUAL:
+            self._cam_resume_timer.stop()
+        self._hud.update_data(cam_mode=CameraMode.LABELS.get(mode, "?"))
 
     def set_depth_limit(self, depth_m: float):
         """Public API để đặt mặt phẳng cảnh báo độ sâu tối đa."""

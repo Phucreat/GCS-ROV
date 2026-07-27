@@ -155,6 +155,9 @@ class AIVisionProcessor(QThread):
         # Non-blocking busy flag to prevent frame queue buildup & video stalling
         self._is_busy: bool = False
 
+        # Model ready flag — frames are dropped until model finishes loading
+        self._model_ready: bool = False
+
         # FPS sliding window (timestamps of the last N completed inferences)
         self._ts_window: deque = deque(maxlen=_FPS_WINDOW)
 
@@ -171,7 +174,7 @@ class AIVisionProcessor(QThread):
         or the queue is full, the incoming frame is instantly skipped.
         This guarantees the video stream stays at 30 FPS without freezing.
         """
-        if not self._running or self._is_busy:
+        if not self._running or not self._model_ready or self._is_busy:
             return
         if self._frame_queue.empty():
             try:
@@ -208,6 +211,7 @@ class AIVisionProcessor(QThread):
     def stop(self) -> None:
         """Signal the run loop to exit and wait for thread to finish."""
         self._running = False
+        self._model_ready = False
         # Unblock the queue.get() call so the thread can exit promptly
         try:
             self._frame_queue.put_nowait(None)   # sentinel value
@@ -237,6 +241,7 @@ class AIVisionProcessor(QThread):
                 # Warm-up run to JIT-compile and pre-allocate memory
                 dummy = np.zeros((320, 320, 3), dtype=np.uint8)
                 self._model.predict(dummy, verbose=False, device=self._device, imgsz=320)
+                self._model_ready = True
                 self.sig_model_loaded.emit(True, f"Model loaded: {self._model_path}")
             except ImportError:
                 self.sig_model_loaded.emit(

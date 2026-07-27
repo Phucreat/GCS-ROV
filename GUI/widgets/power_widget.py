@@ -1,7 +1,7 @@
 """
-power_widget.py - Power System Visualization Widget
-=====================================================
-Widget vẽ đồ thị Power System (pin, dòng, công suất, thruster).
+power_widget.py - Power System + Notification Log Widget
+=========================================================
+Widget vẽ đồ thị Power System (pin, dòng, công suất) + Log thông báo.
 Nhúng vào ogl_powersys (frm_power_sys) trong guirov.py.
 Dùng QPainter để vẽ trực tiếp — không cần OpenGL cho phần này.
 
@@ -10,10 +10,16 @@ Layout:
   │  BATTERY          CURRENT        POWER           │
   │  ████████ 14.8V   ─────── 8.2A   ─── 121.4W     │
   │                                                   │
-  │  THRUSTER LOADS (Bar chart)                       │
-  │  T1  T2  T3  T4  T5  T6                          │
-  │  ██  ██  █   ██  █   ██                          │
-  │       VOLTAGE HISTORY ─────────────              │
+  │  📋 EVENT LOG (scrollable list)                   │
+  │  12:30:01 [INFO] Kết nối MAVLink                  │
+  │  12:30:05 [WARN] Pin thấp 25%                     │
+  │  12:30:08 [INFO] AI model loaded                  │
+  │                                                   │
+  │  ⚠ ACTIVE ALERTS (persistent until resolved)     │
+  │  🚨 CRITICAL: Mất kết nối MAVLink                │
+  │       VOLTAGE HISTORY                             │
+  │  ─────────────────────────────────                │
+  │       DIVE TIME: 23:45                            │
   └─────────────────────────────────────────────────┘
 """
 import math
@@ -24,14 +30,17 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 class PowerWidget(QtWidgets.QWidget):
     """
-    Power System visualization widget.
-    
+    Power System + Event Log + Active Alerts widget.
+
     Cách dùng:
         self.power_widget = PowerWidget(parent=self.frm_power_sys)
         # Mỗi frame MAVLink SYS_STATUS:
         self.power_widget.set_battery(voltage_v, current_a, remaining_pct)
-        # Mỗi frame physics:
-        self.power_widget.set_thruster_loads([t1, t2, t3, t4, t5, t6])  # 0.0-1.0
+        # Event log:
+        self.power_widget.add_log("Kết nối MAVLink", "SUCCESS")
+        # Active alert (persistent):
+        self.power_widget.set_active_alert("Mất kết nối MAVLink", "CRITICAL")
+        self.power_widget.clear_active_alert()
     """
 
     # --- Màu sắc ---
@@ -44,14 +53,18 @@ class PowerWidget(QtWidgets.QWidget):
     COLOR_GREEN   = QtGui.QColor(0,  255, 102)
     COLOR_YELLOW  = QtGui.QColor(255, 200, 0)
     COLOR_RED     = QtGui.QColor(255, 70, 70)
+    COLOR_ORANGE  = QtGui.QColor(255, 150, 30)
     COLOR_BAR_BG  = QtGui.QColor(20, 35, 55)
+    COLOR_LOG_BG  = QtGui.QColor(10, 18, 30)
+    COLOR_ALERT_BG = QtGui.QColor(50, 8, 8)
 
     # Ngưỡng cảnh báo pin
     BAT_WARN_PCT  = 30
     BAT_CRIT_PCT  = 15
 
     HISTORY_LEN   = 120   # ~2 phút với 1Hz
-    MAX_ALERTS    = 6     # Số cảnh báo tối đa hiển thị
+    MAX_LOG_ITEMS = 50    # Tổng log lưu trữ
+    MAX_LOG_VISIBLE = 8   # Số dòng log hiển thị trên màn hình
 
     def __init__(self, parent=None, n_thrusters: int = 6):
         super().__init__(parent)
@@ -62,10 +75,20 @@ class PowerWidget(QtWidgets.QWidget):
         self._thruster_loads = [0.0] * n_thrusters
         self._volt_history   = deque([16.8] * self.HISTORY_LEN, maxlen=self.HISTORY_LEN)
         self._curr_history   = deque([0.0]  * self.HISTORY_LEN, maxlen=self.HISTORY_LEN)
-        # Alerts: deque of (level, message, timestamp)
-        self._alerts: deque  = deque(maxlen=self.MAX_ALERTS)
-        self._dive_time_min: float = -1.0   # -1 = chưa tính được
-        self._blink_phase   = True          # cho hiệu ứng nhấp nháy CRITICAL
+
+        # ── Event Log: danh sách (level, message, timestamp) ──
+        self._log_entries: deque = deque(maxlen=self.MAX_LOG_ITEMS)
+        self._log_scroll_offset: int = 0   # scroll position
+
+        # ── Active Alerts: persistent until cleared ──
+        # list of (level, message, timestamp)
+        self._active_alerts: list = []
+
+        # ── Legacy alerts for backward compat ──
+        self._alerts: deque = deque(maxlen=6)
+
+        self._dive_time_min: float = -1.0
+        self._blink_phase   = True
         self.setMinimumHeight(120)
         self.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Expanding,
@@ -75,6 +98,9 @@ class PowerWidget(QtWidgets.QWidget):
         self._blink_timer = QtCore.QTimer(self)
         self._blink_timer.timeout.connect(self._on_blink)
         self._blink_timer.start(600)
+
+        # Enable mouse wheel scrolling for log
+        self.setMouseTracking(True)
 
     # --------------------------------------------------------
     # API
@@ -92,25 +118,60 @@ class PowerWidget(QtWidgets.QWidget):
         self.update()
 
     def set_thruster_loads(self, loads: list):
-        """loads: list float 0.0–1.0 cho mỗi thruster."""
+        """loads: list float 0.0–1.0 cho mỗi thruster (kept for compat)."""
         self._thruster_loads = list(loads[:self._n_thrusters])
         while len(self._thruster_loads) < self._n_thrusters:
             self._thruster_loads.append(0.0)
-        self.update()
 
     def set_n_thrusters(self, n: int):
         self._n_thrusters = n
         self._thruster_loads = [0.0] * n
+
+    def add_log(self, message: str, level: str = "INFO"):
+        """
+        Thêm một dòng log vào danh sách event log.
+        level: 'INFO' | 'SUCCESS' | 'WARNING' | 'ERROR' | 'CRITICAL'
+        """
+        import time as _time
+        ts = _time.strftime("%H:%M:%S")
+        self._log_entries.appendleft((level.upper(), message, ts))
+        self._log_scroll_offset = 0   # auto-scroll to top on new log
         self.update()
 
     def add_alert(self, level: str, message: str):
         """
-        Thêm cảnh báo mới vào panel.
-        level: 'INFO' | 'WARN' | 'CRITICAL'
+        Legacy API — routes to add_log + set_active_alert for CRITICAL.
+        """
+        self.add_log(message, level)
+        if level.upper() == 'CRITICAL':
+            self.set_active_alert(message, level)
+
+    def set_active_alert(self, message: str, level: str = "CRITICAL"):
+        """
+        Đặt cảnh báo khẩn cấp cố định (persistent).
+        Không tự biến mất — phải gọi clear_active_alert() để xóa.
         """
         import time as _time
         ts = _time.strftime("%H:%M:%S")
-        self._alerts.appendleft((level.upper(), message, ts))
+        # Tránh duplicate
+        for a in self._active_alerts:
+            if a[1] == message:
+                return
+        self._active_alerts.append((level.upper(), message, ts))
+        self.update()
+
+    def clear_active_alert(self, message: str = None):
+        """
+        Xóa cảnh báo khẩn cấp.
+        Nếu message=None → xóa tất cả.
+        Nếu message=str → chỉ xóa alert có message đó.
+        """
+        if message is None:
+            self._active_alerts.clear()
+        else:
+            self._active_alerts = [
+                a for a in self._active_alerts if a[1] != message
+            ]
         self.update()
 
     def set_dive_time(self, minutes: float):
@@ -119,14 +180,32 @@ class PowerWidget(QtWidgets.QWidget):
         self.update()
 
     def clear_alerts(self):
-        self._alerts.clear()
+        self._active_alerts.clear()
+        self.update()
+
+    def clear_log(self):
+        self._log_entries.clear()
+        self._log_scroll_offset = 0
         self.update()
 
     def _on_blink(self):
         self._blink_phase = not self._blink_phase
-        # Chỉ redraw nếu có CRITICAL alert
-        if any(a[0] == 'CRITICAL' for a in self._alerts):
+        if self._active_alerts:
             self.update()
+
+    # --------------------------------------------------------
+    # SCROLL
+    # --------------------------------------------------------
+    def wheelEvent(self, event):
+        """Scroll log list with mouse wheel."""
+        delta = event.angleDelta().y()
+        max_scroll = max(0, len(self._log_entries) - self.MAX_LOG_VISIBLE)
+        if delta > 0:
+            self._log_scroll_offset = max(0, self._log_scroll_offset - 1)
+        else:
+            self._log_scroll_offset = min(max_scroll, self._log_scroll_offset + 1)
+        self.update()
+        event.accept()
 
     # --------------------------------------------------------
     # VẼ
@@ -139,18 +218,35 @@ class PowerWidget(QtWidgets.QWidget):
         # Nền
         p.fillRect(0, 0, w, h, self.COLOR_BG)
 
-        # Chia layout: gauges | thrusters | chart | dive_timer | alerts
-        top_h    = int(h * 0.28)
-        mid_h    = int(h * 0.25)
-        chart_h  = int(h * 0.20)
-        timer_h  = int(h * 0.09)
-        alerts_h = h - top_h - mid_h - chart_h - timer_h
+        # Chia layout động:
+        #   top_h     = Battery/Current/Power gauges (~22%)
+        #   log_h     = Event log list (~35%)
+        #   alert_h   = Active alerts (dynamic, 0 if no alerts, else ~15%)
+        #   chart_h   = Voltage history (~18%)
+        #   timer_h   = Dive time (~10%)
+        has_alerts = len(self._active_alerts) > 0
 
-        self._draw_top_gauges(p, 0, 0, w, top_h)
-        self._draw_thruster_bars(p, 0, top_h, w, mid_h)
-        self._draw_voltage_chart(p, 0, top_h + mid_h, w, chart_h)
-        self._draw_dive_timer(p, 0, top_h + mid_h + chart_h, w, timer_h)
-        self._draw_alerts(p, 0, top_h + mid_h + chart_h + timer_h, w, alerts_h)
+        top_h    = int(h * 0.22)
+        alert_h  = int(h * 0.16) if has_alerts else 0
+        chart_h  = int(h * 0.18)
+        timer_h  = int(h * 0.09)
+        log_h    = h - top_h - alert_h - chart_h - timer_h
+
+        y_cursor = 0
+        self._draw_top_gauges(p, 0, y_cursor, w, top_h)
+        y_cursor += top_h
+
+        self._draw_event_log(p, 0, y_cursor, w, log_h)
+        y_cursor += log_h
+
+        if has_alerts:
+            self._draw_active_alerts(p, 0, y_cursor, w, alert_h)
+            y_cursor += alert_h
+
+        self._draw_voltage_chart(p, 0, y_cursor, w, chart_h)
+        y_cursor += chart_h
+
+        self._draw_dive_timer(p, 0, y_cursor, w, timer_h)
 
         p.end()
 
@@ -232,49 +328,170 @@ class PowerWidget(QtWidgets.QWidget):
         p.setBrush(color)
         p.drawRoundedRect(bar_x, bar_y, int(bar_w * frac), bar_h, 3, 3)
 
-    def _draw_thruster_bars(self, p, x, y, w, h):
-        """Vẽ thanh dọc cho từng thruster."""
-        n = self._n_thrusters
-        if n == 0:
+    # ── EVENT LOG (danh sách thông báo dạng log) ─────────────
+    def _draw_event_log(self, p, x, y, w, h):
+        """Vẽ danh sách log sự kiện có thể cuộn."""
+        if h < 20:
             return
-        pad_top = 12
-        pad_bot = 18
-        bar_area_w = (w - 8) // n
-        bar_w = max(6, bar_area_w - 4)
-        max_bar_h = h - pad_top - pad_bot
+        pad = 6
+        line_h = 16
+        header_h = 16
+
+        # Border + Background
+        p.setPen(QtGui.QPen(self.COLOR_BORDER, 1))
+        p.drawLine(x + pad, y, x + w - pad, y)
 
         # Header
-        p.setPen(self.COLOR_LABEL)
-        p.setFont(QtGui.QFont("Rajdhani", 7, QtGui.QFont.Weight.Bold))
-        p.drawText(x + 4, y + 10, "THRUSTER LOADS")
+        p.setPen(self.COLOR_CYAN)
+        p.setFont(QtGui.QFont("Rajdhani", 8, QtGui.QFont.Weight.Bold))
+        p.drawText(x + pad, y + 12, "📋 EVENT LOG")
 
-        for i, load in enumerate(self._thruster_loads):
-            load = abs(load)
-            bx = x + 4 + i * bar_area_w + (bar_area_w - bar_w)//2
-            # Nền
-            p.setPen(QtCore.Qt.PenStyle.NoPen)
-            p.setBrush(self.COLOR_BAR_BG)
-            p.drawRoundedRect(bx, y + pad_top, bar_w, max_bar_h, 2, 2)
-            # Fill
-            fill_h = int(max_bar_h * load)
-            bar_color = self._thruster_color(load)
-            p.setBrush(bar_color)
-            p.drawRoundedRect(
-                bx, y + pad_top + (max_bar_h - fill_h),
-                bar_w, fill_h, 2, 2
-            )
-            # Label
-            p.setPen(self.COLOR_TEXT)
+        # Count badge
+        count = len(self._log_entries)
+        if count > 0:
+            count_str = str(count)
+            p.setPen(self.COLOR_LABEL)
             p.setFont(QtGui.QFont("Rajdhani", 7))
-            p.drawText(bx, y + h - 4, f"T{i+1}")
+            p.drawText(x + w - pad - 30, y + 12, f"({count})")
 
-    def _thruster_color(self, load: float) -> QtGui.QColor:
-        if load < 0.5:
-            return self.COLOR_CYAN
-        elif load < 0.8:
-            return self.COLOR_YELLOW
-        else:
-            return self.COLOR_RED
+        # Log area background
+        log_y = y + header_h
+        log_h = h - header_h - 2
+        p.setPen(QtCore.Qt.PenStyle.NoPen)
+        p.setBrush(self.COLOR_LOG_BG)
+        p.drawRoundedRect(x + pad, log_y, w - pad*2, log_h, 4, 4)
+
+        if not self._log_entries:
+            # Empty state
+            p.setPen(QtGui.QColor(60, 80, 100))
+            p.setFont(QtGui.QFont("Segoe UI", 8))
+            p.drawText(x + pad + 8, log_y + log_h // 2 + 4, "Chưa có thông báo...")
+            return
+
+        # Tính số dòng hiển thị
+        visible_lines = max(1, (log_h - 4) // line_h)
+        self.MAX_LOG_VISIBLE = visible_lines
+
+        # Level color map
+        LEVEL_COLORS = {
+            'INFO':     (self.COLOR_CYAN,   "ℹ"),
+            'SUCCESS':  (self.COLOR_GREEN,  "✓"),
+            'WARNING':  (self.COLOR_YELLOW, "⚠"),
+            'ERROR':    (self.COLOR_RED,    "✕"),
+            'CRITICAL': (self.COLOR_RED,    "🚨"),
+            'WARN':     (self.COLOR_YELLOW, "⚠"),
+        }
+
+        # Clip painting
+        p.setClipRect(x + pad, log_y, w - pad*2, log_h)
+
+        entries = list(self._log_entries)
+        start = self._log_scroll_offset
+        end = min(start + visible_lines, len(entries))
+
+        for i in range(start, end):
+            lvl, msg, ts = entries[i]
+            ry = log_y + 2 + (i - start) * line_h
+            if ry + line_h > log_y + log_h:
+                break
+
+            color, icon = LEVEL_COLORS.get(lvl, (self.COLOR_TEXT, "•"))
+
+            # Alternating row background
+            if (i - start) % 2 == 0:
+                p.setPen(QtCore.Qt.PenStyle.NoPen)
+                p.setBrush(QtGui.QColor(15, 25, 40, 120))
+                p.drawRect(x + pad, ry, w - pad*2, line_h)
+
+            # Timestamp
+            p.setPen(QtGui.QColor(70, 90, 110))
+            p.setFont(QtGui.QFont("Consolas", 7))
+            p.drawText(x + pad + 4, ry + line_h - 4, ts)
+
+            # Level icon + color bar
+            bar_x = x + pad + 52
+            p.setPen(QtCore.Qt.PenStyle.NoPen)
+            p.setBrush(QtGui.QColor(color.red(), color.green(), color.blue(), 40))
+            p.drawRoundedRect(bar_x, ry + 2, 3, line_h - 4, 1, 1)
+
+            # Message
+            p.setPen(color if lvl in ('ERROR', 'CRITICAL', 'WARNING', 'WARN') else self.COLOR_TEXT)
+            p.setFont(QtGui.QFont("Segoe UI", 7))
+            # Truncate message to fit
+            available_w = w - pad*2 - 62
+            fm = p.fontMetrics()
+            elided = fm.elidedText(msg, QtCore.Qt.TextElideMode.ElideRight, available_w)
+            p.drawText(bar_x + 6, ry + line_h - 4, elided)
+
+        p.setClipping(False)
+
+        # Scroll indicator
+        if len(entries) > visible_lines:
+            scroll_track_h = log_h - 4
+            scroll_ratio = visible_lines / len(entries)
+            thumb_h = max(12, int(scroll_track_h * scroll_ratio))
+            if len(entries) - visible_lines > 0:
+                thumb_y = log_y + 2 + int(
+                    (scroll_track_h - thumb_h) *
+                    self._log_scroll_offset / (len(entries) - visible_lines)
+                )
+            else:
+                thumb_y = log_y + 2
+            # Track
+            sx = x + w - pad - 4
+            p.setPen(QtCore.Qt.PenStyle.NoPen)
+            p.setBrush(QtGui.QColor(25, 40, 60))
+            p.drawRoundedRect(sx, log_y + 2, 3, scroll_track_h, 1, 1)
+            # Thumb
+            p.setBrush(QtGui.QColor(0, 168, 255, 120))
+            p.drawRoundedRect(sx, thumb_y, 3, thumb_h, 1, 1)
+
+    # ── ACTIVE ALERTS (persistent, won't auto-dismiss) ───────
+    def _draw_active_alerts(self, p, x, y, w, h):
+        """Vẽ panel cảnh báo khẩn cấp cố định."""
+        if h < 14 or not self._active_alerts:
+            return
+        pad = 6
+
+        # Background đỏ đậm
+        bg_alpha = 180 if self._blink_phase else 140
+        p.setPen(QtCore.Qt.PenStyle.NoPen)
+        p.setBrush(QtGui.QColor(60, 5, 5, bg_alpha))
+        p.drawRoundedRect(x + pad, y + 2, w - pad*2, h - 4, 6, 6)
+
+        # Border nhấp nháy
+        border_color = self.COLOR_RED if self._blink_phase else QtGui.QColor(120, 30, 30)
+        p.setPen(QtGui.QPen(border_color, 1.5))
+        p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(x + pad, y + 2, w - pad*2, h - 4, 6, 6)
+
+        # Header
+        header_color = self.COLOR_RED if self._blink_phase else QtGui.QColor(180, 50, 50)
+        p.setPen(header_color)
+        p.setFont(QtGui.QFont("Rajdhani", 8, QtGui.QFont.Weight.Bold))
+        p.drawText(x + pad + 8, y + 16, "🚨 ACTIVE ALERTS")
+
+        # Alert entries
+        line_h = 15
+        alert_y = y + 20
+        for i, (lvl, msg, ts) in enumerate(self._active_alerts):
+            ry = alert_y + i * line_h
+            if ry + line_h > y + h - 2:
+                break
+
+            # Blinking dot
+            if self._blink_phase:
+                p.setPen(QtCore.Qt.PenStyle.NoPen)
+                p.setBrush(self.COLOR_RED)
+                p.drawEllipse(x + pad + 10, ry + 3, 6, 6)
+
+            # Message
+            p.setPen(QtGui.QColor(255, 180, 180) if self._blink_phase else QtGui.QColor(200, 120, 120))
+            p.setFont(QtGui.QFont("Segoe UI", 7, QtGui.QFont.Weight.Bold))
+            available_w = w - pad*2 - 24
+            fm = p.fontMetrics()
+            elided = fm.elidedText(f"[{ts}] {msg}", QtCore.Qt.TextElideMode.ElideRight, available_w)
+            p.drawText(x + pad + 20, ry + 11, elided)
 
     def _draw_voltage_chart(self, p, x, y, w, h):
         """Vẽ biểu đồ lịch sử điện áp."""
@@ -362,38 +579,3 @@ class PowerWidget(QtWidgets.QWidget):
         p.setPen(color)
         p.setFont(QtGui.QFont("Rajdhani", 8, QtGui.QFont.Weight.Bold))
         p.drawText(x + pad, y + h - 3, time_str)
-
-    def _draw_alerts(self, p, x, y, w, h):
-        """Vẽ panel cảnh báo cuộn (tối đa MAX_ALERTS dòng)."""
-        if h < 14 or not self._alerts:
-            return
-        pad  = 6
-        line_h = max(13, h // (self.MAX_ALERTS + 1))
-
-        # Header
-        p.setPen(QtGui.QPen(self.COLOR_BORDER, 1))
-        p.drawLine(x + pad, y, x + w - pad, y)
-        p.setPen(self.COLOR_LABEL)
-        p.setFont(QtGui.QFont("Rajdhani", 7, QtGui.QFont.Weight.Bold))
-        p.drawText(x + pad, y + 11, "SYSTEM ALERTS")
-
-        LEVEL_COLOR = {
-            'INFO':     self.COLOR_CYAN,
-            'WARN':     self.COLOR_YELLOW,
-            'CRITICAL': self.COLOR_RED if self._blink_phase else QtGui.QColor(100, 30, 30),
-        }
-        for i, (lvl, msg, ts) in enumerate(self._alerts):
-            ry = y + 14 + i * line_h
-            if ry + line_h > y + h:
-                break
-            color = LEVEL_COLOR.get(lvl, self.COLOR_TEXT)
-            # Badge level
-            badge_w = 42
-            p.fillRect(x + pad, ry + 1, badge_w, line_h - 2, QtGui.QColor(color.red(), color.green(), color.blue(), 30))
-            p.setPen(color)
-            p.setFont(QtGui.QFont("Rajdhani", 7, QtGui.QFont.Weight.Bold))
-            p.drawText(x + pad + 2, ry + line_h - 3, f"{lvl[:4]}")
-            # Message
-            p.setPen(self.COLOR_TEXT)
-            p.setFont(QtGui.QFont("Rajdhani", 7))
-            p.drawText(x + pad + badge_w + 4, ry + line_h - 3, f"{ts} {msg}")

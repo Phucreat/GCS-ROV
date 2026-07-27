@@ -109,6 +109,13 @@ try:
 except ImportError:
     HAS_DIAG = False
 
+# ── Notification System ─────────────────────────────────────
+try:
+    from GUI.widgets.notification_manager import NotificationManager
+    HAS_NOTIF = True
+except ImportError:
+    HAS_NOTIF = False
+
 
 # ==============================================================
 # CÁC MODEL ROV HỖ TRỢ
@@ -250,6 +257,12 @@ class ROVMainWindow(QMainWindow):
 
         # Tự động mở 100% toàn màn hình khi khởi chạy
         self.showMaximized()
+
+        # ── Toast Notification Manager ──────────────────────────
+        if HAS_NOTIF:
+            self._notifier = NotificationManager(parent=self)
+        else:
+            self._notifier = None
 
     # ----------------------------------------------------------
     # INJECT WIDGETS VÀO LAYOUT GỐC
@@ -499,27 +512,31 @@ class ROVMainWindow(QMainWindow):
         """Đổi nhanh nguồn Video trực tiếp từ ComboBox trên GUI chính."""
         if not self._video_rx:
             return
+        src_name = ""
         if index == 0:  # Laptop Webcam
             idx = int(self.settings.get('webcam_index', 0))
             self.settings['video_source'] = 'webcam'
             self._video_rx.set_source(VideoSource.WEBCAM, idx)
-            print(f"[Video] Switched to Laptop Webcam (Index {idx})")
+            src_name = f"Laptop Webcam (Index {idx})"
         elif index == 1:  # ROV UDP Stream
             port = int(self.settings.get('udp_video_port', 5620))
             self.settings['video_source'] = 'udp_h264'
             self._video_rx.set_source(VideoSource.UDP_H264, port)
-            print(f"[Video] Switched to ROV UDP Stream (Port {port})")
+            src_name = f"ROV UDP Stream (Port {port})"
         elif index == 2:  # RTSP
             url = self.settings.get(
                 'rtsp_url', 'rtsp://192.168.2.2:8554/video')
             self.settings['video_source'] = 'rtsp'
             self._video_rx.set_source(VideoSource.RTSP, url)
-            print(f"[Video] Switched to RTSP Stream ({url})")
+            src_name = f"RTSP Stream"
         elif index == 3:  # File
             path = self.settings.get('video_file', '')
             self.settings['video_source'] = 'file'
             self._video_rx.set_source(VideoSource.FILE, path)
-            print(f"[Video] Switched to Video File ({path})")
+            src_name = f"Video File"
+        print(f"[Video] Switched to {src_name}")
+        if hasattr(self, 'power_widget') and self.power_widget:
+            self.power_widget.add_log(f"📹 Đổi nguồn video: {src_name}", "INFO")
 
     def _popout_video_window(self):
         """Mở video ra một cửa sổ riêng biệt nếu người dùng muốn phóng to."""
@@ -604,6 +621,11 @@ class ROVMainWindow(QMainWindow):
 
     def _on_ai_model_loaded(self, ok: bool, msg: str):
         print(f"[AI] Model status: {msg}")
+        if hasattr(self, 'power_widget') and self.power_widget:
+            if ok:
+                self.power_widget.add_log(f"🧠 {msg}", "SUCCESS")
+            else:
+                self.power_widget.add_log(f"❌ AI: {msg}", "ERROR")
         if not ok:
             QtWidgets.QMessageBox.warning(
                 self, "AI Load Warning",
@@ -616,6 +638,8 @@ class ROVMainWindow(QMainWindow):
         if not HAS_AI:
             return
         if enabled:
+            if hasattr(self, 'power_widget') and self.power_widget:
+                self.power_widget.add_log("🤖 Đang khởi tạo AI Detection...", "INFO")
             if self._ai_proc is None:
                 self._setup_ai_pipeline()
             elif not self._ai_proc.isRunning():
@@ -625,12 +649,16 @@ class ROVMainWindow(QMainWindow):
                 self._ai_proc.stop()
             if self._ar_hud:
                 self._ar_hud.set_detections([])
+            if hasattr(self, 'power_widget') and self.power_widget:
+                self.power_widget.add_log("🤖 AI Detection đã tắt", "INFO")
 
     # ── Diagnostic Alert Handler ──────────────────────────────────
     def _on_diagnostic_alert(self, level: str, message: str):
         """Nhận cảnh báo từ DiagnosticsEngine → hiển thị trong PowerWidget."""
         if hasattr(self, 'power_widget') and self.power_widget:
-            self.power_widget.add_alert(level, message)
+            self.power_widget.add_log(message, level)
+            if level.upper() == 'CRITICAL':
+                self.power_widget.set_active_alert(message, level)
         # CRITICAL: cũng hiển thị trên AR HUD nếu đang mở
         if self._ar_hud and level == 'CRITICAL':
             self._ar_hud.set_warning(message, level)
@@ -973,6 +1001,14 @@ class ROVMainWindow(QMainWindow):
         if self._physics:
             if not connected:
                 self._physics.disable_external_pose()
+        # ── Log & Active Alert trong PowerWidget ──
+        if hasattr(self, 'power_widget') and self.power_widget:
+            if connected:
+                self.power_widget.add_log("Đã kết nối MAVLink", "SUCCESS")
+                self.power_widget.clear_active_alert("Mất kết nối MAVLink")
+            else:
+                self.power_widget.add_log("Mất kết nối MAVLink", "ERROR")
+                self.power_widget.set_active_alert("Mất kết nối MAVLink", "CRITICAL")
 
     def _on_link_quality(self, pct: int):
         self._link_quality = pct
@@ -1215,6 +1251,8 @@ class ROVMainWindow(QMainWindow):
             self.ui.pbtn_camera.setToolTip(
                 f"Recording... Click để dừng. File: {os.path.basename(path)}")
             print(f"[Camera] Recording started: {path}")
+            if hasattr(self, 'power_widget') and self.power_widget:
+                self.power_widget.add_log(f"🔴 Đang ghi hình: {os.path.basename(path)}", "WARNING")
         except Exception as e:
             self._is_recording = False
             QtWidgets.QMessageBox.critical(self, "Lỗi Recording", str(e))
@@ -1229,6 +1267,8 @@ class ROVMainWindow(QMainWindow):
         self.ui.pbtn_camera.setStyleSheet("")
         self.ui.pbtn_camera.setToolTip("Chụp ảnh / Ghi video")
         print("[Camera] Recording stopped.")
+        if hasattr(self, 'power_widget') and self.power_widget:
+            self.power_widget.add_log("⏹ Ghi hình đã dừng, video đã lưu", "SUCCESS")
         QtWidgets.QMessageBox.information(
             self, "📹 Recording dừng",
             f"Video đã lưu vào thư mục:\n{self._get_media_dir()}"
@@ -1243,6 +1283,8 @@ class ROVMainWindow(QMainWindow):
             self.settings.update(dlg.settings)
             self._apply_updated_settings()
             print(f"[Settings] Saved & applied dynamically: {self.settings}")
+            if hasattr(self, 'power_widget') and self.power_widget:
+                self.power_widget.add_log("⚙️ Cài đặt đã lưu và áp dụng", "SUCCESS")
 
     def _apply_updated_settings(self):
         """
