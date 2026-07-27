@@ -924,7 +924,8 @@ class ARHUDWidget(QWidget):
             cv2.line(img, (x2, y2), (x2, y2 - corner_len), _C.WHITE, 2)
 
             # Label
-            label = f"{det.class_name.upper()} {int(det.conf * 100)}%"
+            conf_val = getattr(det, 'confidence', getattr(det, 'conf', 0.0))
+            label = f"{det.class_name.upper()} {int(conf_val * 100)}%"
             if det.track_id >= 0:
                 label += f" #{det.track_id}"
 

@@ -184,7 +184,7 @@ class ROVMainWindow(QMainWindow):
         # Dirty flags — đánh dấu dữ liệu mới từ MAVLink chưa render
         self._dirty_attitude = False
         self._dirty_position = False
-        self._dirty_battery  = False
+        self._dirty_battery = False
         self._dirty_heartbeat = False
         # Frame counter cho throttling các tác vụ nặng
         self._frame_count = 0
@@ -639,7 +639,8 @@ class ROVMainWindow(QMainWindow):
             return
         if enabled:
             if hasattr(self, 'power_widget') and self.power_widget:
-                self.power_widget.add_log("🤖 Đang khởi tạo AI Detection...", "INFO")
+                self.power_widget.add_log(
+                    "🤖 Đang khởi tạo AI Detection...", "INFO")
             if self._ai_proc is None:
                 self._setup_ai_pipeline()
             elif not self._ai_proc.isRunning():
@@ -887,7 +888,7 @@ class ROVMainWindow(QMainWindow):
           - _on_frame() đọc buffer, reset dirty flag, cập nhật widget.
           - Loại bỏ hoàn toàn xung đột giữa tần suất nhận MAVLink
             (50Hz attitude, 10Hz position) và tần suất vẽ (60 FPS GUI).
-        
+
         Tối ưu hóa bổ sung:
           - Trajectory: chỉ cập nhật mỗi 3 frame (~20 Hz)
           - FOV effect: chỉ cập nhật mỗi 4 frame (~15 Hz)
@@ -925,16 +926,16 @@ class ROVMainWindow(QMainWindow):
 
         # ── 4. Chọn nguồn dữ liệu: Physics hoặc MAVLink ─────
         if self._connected:
-            pos  = self._pos_ned
+            pos = self._pos_ned
             quat = self._euler_to_quat(self._roll, self._pitch, self._yaw)
-            vel  = self._vel_ned
+            vel = self._vel_ned
         else:
-            pos  = state["position"]
+            pos = state["position"]
             quat = state["orientation_quat"]
-            vel  = np.array(state.get("linear_velocity", [0, 0, 0]))
+            vel = np.array(state.get("linear_velocity", [0, 0, 0]))
 
-        spd_now   = float(np.linalg.norm(vel))
-        roll_deg  = math.degrees(self._roll)
+        spd_now = float(np.linalg.norm(vel))
+        roll_deg = math.degrees(self._roll)
         pitch_deg = math.degrees(self._pitch)
 
         # ── 5. Cập nhật 3D ROV widget (MỖI FRAME) ────────────
@@ -1008,7 +1009,8 @@ class ROVMainWindow(QMainWindow):
                 self.power_widget.clear_active_alert("Mất kết nối MAVLink")
             else:
                 self.power_widget.add_log("Mất kết nối MAVLink", "ERROR")
-                self.power_widget.set_active_alert("Mất kết nối MAVLink", "CRITICAL")
+                self.power_widget.set_active_alert(
+                    "Mất kết nối MAVLink", "CRITICAL")
 
     def _on_link_quality(self, pct: int):
         self._link_quality = pct
@@ -1252,7 +1254,8 @@ class ROVMainWindow(QMainWindow):
                 f"Recording... Click để dừng. File: {os.path.basename(path)}")
             print(f"[Camera] Recording started: {path}")
             if hasattr(self, 'power_widget') and self.power_widget:
-                self.power_widget.add_log(f"🔴 Đang ghi hình: {os.path.basename(path)}", "WARNING")
+                self.power_widget.add_log(
+                    f"🔴 Đang ghi hình: {os.path.basename(path)}", "WARNING")
         except Exception as e:
             self._is_recording = False
             QtWidgets.QMessageBox.critical(self, "Lỗi Recording", str(e))
@@ -1268,7 +1271,8 @@ class ROVMainWindow(QMainWindow):
         self.ui.pbtn_camera.setToolTip("Chụp ảnh / Ghi video")
         print("[Camera] Recording stopped.")
         if hasattr(self, 'power_widget') and self.power_widget:
-            self.power_widget.add_log("⏹ Ghi hình đã dừng, video đã lưu", "SUCCESS")
+            self.power_widget.add_log(
+                "⏹ Ghi hình đã dừng, video đã lưu", "SUCCESS")
         QtWidgets.QMessageBox.information(
             self, "📹 Recording dừng",
             f"Video đã lưu vào thư mục:\n{self._get_media_dir()}"
@@ -1284,7 +1288,8 @@ class ROVMainWindow(QMainWindow):
             self._apply_updated_settings()
             print(f"[Settings] Saved & applied dynamically: {self.settings}")
             if hasattr(self, 'power_widget') and self.power_widget:
-                self.power_widget.add_log("⚙️ Cài đặt đã lưu và áp dụng", "SUCCESS")
+                self.power_widget.add_log(
+                    "⚙️ Cài đặt đã lưu và áp dụng", "SUCCESS")
 
     def _apply_updated_settings(self):
         """

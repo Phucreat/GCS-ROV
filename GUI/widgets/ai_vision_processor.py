@@ -80,6 +80,11 @@ class Detection:
         self.center_y = ((self.y1 + self.y2) / 2.0) / max(self._frame_h, 1)
 
     @property
+    def conf(self) -> float:
+        """Alias for confidence for compatibility with AR HUD widget."""
+        return self.confidence
+
+    @property
     def color(self) -> tuple:
         """Return BGR draw colour for this class."""
         return CLASS_COLORS.get(self.class_name.lower(), _DEFAULT_COLOR)
