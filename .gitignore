@@ -1,26 +1,4 @@
-# 🔥 Build files (NGUYÊN NHÂN LỖI CỦA BẠN)
 dist/
 build/
 *.exe
 *.pkg
-
-# 🐍 Python cache
-__pycache__/
-*.pyc
-
-# 🧪 Virtual environment
-.venv/
-env/
-
-# ⚙️ VS Code
-.vscode/
-
-# 📦 Logs
-*.log
-
-# 🧾 OS files
-.DS_Store
-Thumbs.db
-
-# 🔐 Env config (API key, secret)
-.env
