@@ -67,6 +67,12 @@ _OPEN_TIMEOUT_S: float = 5.0
 _CAP_OPEN_POLL_S: float = 0.1
 """Polling interval while waiting for VideoCapture.open()."""
 
+_SOURCE_SWITCH_RETRY_S: float = 1.0
+"""Seconds to wait between retries when switching source fails."""
+
+_SOURCE_SWITCH_MAX_RETRIES: int = 5
+"""Maximum retries when switching to a new source fails."""
+
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -241,14 +247,17 @@ class VideoReceiver(QThread):
                 if not self._running:
                     break
                 self.sig_connected.emit(False)
-                # For RTSP / UDP_H264 we will retry; for others bail out
-                if source_type not in (VideoSource.RTSP, VideoSource.UDP_H264):
-                    self.sig_error.emit(
-                        f"Cannot open source: {url_or_index!r}"
-                    )
-                    break
-                # Brief pause before the outer loop retries
-                self._interruptible_sleep(cv2, _RTSP_RECONNECT_DELAY_S)
+
+                # Kiểm tra xem có đang chờ chuyển nguồn không
+                with self._lock:
+                    if self._source_changed:
+                        continue   # Có nguồn mới → thử lại ngay
+
+                # Mọi loại nguồn đều retry (không bail out nữa)
+                self.sig_error.emit(
+                    f"Không thể mở nguồn: {url_or_index!r} — thử lại sau {_SOURCE_SWITCH_RETRY_S}s..."
+                )
+                self._interruptible_sleep(cv2, _SOURCE_SWITCH_RETRY_S)
                 continue
 
             self.sig_connected.emit(True)
@@ -270,18 +279,24 @@ class VideoReceiver(QThread):
                 ret, frame = cap.read()
 
                 if not ret or frame is None:
-                    # Read failure
-                    cap.release()
+                    # Read failure — release cap ngay lập tức
+                    self._safe_release(cap)
+                    cap = None
                     self.sig_connected.emit(False)
 
-                    if source_type is VideoSource.RTSP:
+                    # Kiểm tra nguồn có đổi không
+                    with self._lock:
+                        if self._source_changed:
+                            break  # → outer loop sẽ mở nguồn mới
+
+                    if source_type is VideoSource.RTSP or source_type is VideoSource.UDP_H264:
                         reconnect_count += 1
                         if reconnect_count > _RTSP_MAX_RECONNECTS:
                             self.sig_error.emit(
                                 f"RTSP: exceeded {_RTSP_MAX_RECONNECTS} "
                                 "reconnect attempts - giving up."
                             )
-                            self._running = False
+                            # KHÔNG đặt _running = False, để có thể chuyển nguồn mới
                             break
 
                         print(
@@ -297,13 +312,23 @@ class VideoReceiver(QThread):
                             self.sig_connected.emit(True)
                             print("[VideoReceiver] RTSP reconnected successfully.")
                         continue  # restart inner loop with new cap
-                    else:
-                        # Non-RTSP stream ended (e.g. video file finished)
+
+                    elif source_type is VideoSource.FILE:
+                        # Video file kết thúc → loop lại từ đầu thay vì die
                         self.sig_error.emit(
-                            f"Stream ended for source: {url_or_index!r}"
+                            f"Video file ended: {url_or_index!r} — restarting..."
                         )
-                        self._running = False
-                        break
+                        self._interruptible_sleep(cv2, 0.5)
+                        break  # → outer loop sẽ reopen cùng file
+
+                    else:
+                        # Webcam / other — retry mở lại
+                        self.sig_error.emit(
+                            f"Stream ended for source: {url_or_index!r} — retrying..."
+                        )
+                        self._interruptible_sleep(cv2, _SOURCE_SWITCH_RETRY_S)
+                        break  # → outer loop reopens
+
                 else:
                     reconnect_count = 0  # Reset on successful read
 
@@ -319,9 +344,9 @@ class VideoReceiver(QThread):
                     # fall back to time.sleep for headless environments.
                     time.sleep(sleep_s)
 
-            # End of inner loop
-            if cap is not None and cap.isOpened():
-                cap.release()
+            # End of inner loop — release capture an toàn
+            self._safe_release(cap)
+            cap = None
 
         # Thread is exiting
         self.sig_connected.emit(False)
@@ -329,6 +354,19 @@ class VideoReceiver(QThread):
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _safe_release(self, cap) -> None:
+        """
+        Release cv2.VideoCapture an toàn, không block GUI.
+        Đặc biệt quan trọng cho DirectShow (webcam Windows).
+        """
+        if cap is None:
+            return
+        try:
+            if cap.isOpened():
+                cap.release()
+        except Exception as exc:
+            print(f"[VideoReceiver] Warning during cap.release(): {exc}")
 
     def _open_capture(
         self,
@@ -392,7 +430,15 @@ class VideoReceiver(QThread):
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
             elif source_type is VideoSource.FILE:
-                cap = cv2.VideoCapture(str(url_or_index))
+                path = str(url_or_index)
+                if not path:
+                    self.sig_error.emit("Video file path is empty!")
+                    return None
+                import os
+                if not os.path.isfile(path):
+                    self.sig_error.emit(f"Video file not found: {path}")
+                    return None
+                cap = cv2.VideoCapture(path)
 
             else:
                 self.sig_error.emit(f"Unknown VideoSource type: {source_type!r}")
@@ -401,6 +447,11 @@ class VideoReceiver(QThread):
             # Brief open-check with timeout
             deadline = time.monotonic() + _OPEN_TIMEOUT_S
             while not cap.isOpened() and time.monotonic() < deadline:
+                # Kiểm tra source_changed trong lúc chờ
+                with self._lock:
+                    if self._source_changed:
+                        cap.release()
+                        return None
                 time.sleep(_CAP_OPEN_POLL_S)
 
             if not cap.isOpened():
@@ -451,7 +502,8 @@ class VideoReceiver(QThread):
     def _interruptible_sleep(self, cv2, duration_s: float) -> None:
         """
         Sleep for *duration_s* seconds in small increments so that
-        ``self._running = False`` is noticed promptly during waits.
+        ``self._running = False`` or ``self._source_changed`` is noticed
+        promptly during waits.
 
         Parameters
         ----------
@@ -462,4 +514,8 @@ class VideoReceiver(QThread):
         """
         end = time.monotonic() + duration_s
         while self._running and time.monotonic() < end:
+            # Thoát sleep sớm nếu có lệnh chuyển nguồn
+            with self._lock:
+                if self._source_changed:
+                    return
             time.sleep(0.05)

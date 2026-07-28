@@ -528,12 +528,29 @@ class ROVMainWindow(QMainWindow):
                 'rtsp_url', 'rtsp://192.168.2.2:8554/video')
             self.settings['video_source'] = 'rtsp'
             self._video_rx.set_source(VideoSource.RTSP, url)
-            src_name = f"RTSP Stream"
+            src_name = "RTSP Stream"
         elif index == 3:  # File
+            import os
             path = self.settings.get('video_file', '')
+            # Nếu chưa có file → mở dialog chọn file
+            if not path or not os.path.isfile(path):
+                path, _ = QtWidgets.QFileDialog.getOpenFileName(
+                    self, "Chọn Video File",
+                    os.path.expanduser("~"),
+                    "Video Files (*.mp4 *.avi *.mkv *.mov *.wmv *.flv);;All Files (*)"
+                )
+                if not path:
+                    # User cancel → quay lại nguồn cũ
+                    old_src = self.settings.get('video_source', 'webcam')
+                    map_idx = {'webcam': 0, 'udp_h264': 1, 'rtsp': 2, 'file': 3}
+                    self.cb_quick_vid_src.blockSignals(True)
+                    self.cb_quick_vid_src.setCurrentIndex(map_idx.get(old_src, 0))
+                    self.cb_quick_vid_src.blockSignals(False)
+                    return
+                self.settings['video_file'] = path
             self.settings['video_source'] = 'file'
             self._video_rx.set_source(VideoSource.FILE, path)
-            src_name = f"Video File"
+            src_name = f"Video File ({os.path.basename(path)})"
         print(f"[Video] Switched to {src_name}")
         if hasattr(self, 'power_widget') and self.power_widget:
             self.power_widget.add_log(f"📹 Đổi nguồn video: {src_name}", "INFO")
