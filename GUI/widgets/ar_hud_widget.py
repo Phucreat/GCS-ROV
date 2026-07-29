@@ -26,9 +26,12 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 import numpy as np
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QSizePolicy
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSizePolicy,
+    QFrame, QPushButton, QButtonGroup
+)
 
 # ---------------------------------------------------------------------------
 # Lazy OpenCV import helper
@@ -200,13 +203,14 @@ def _draw_rounded_rect(img, pt1, pt2, color, radius=6, thickness=1):
 # ---------------------------------------------------------------------------
 class ARHUDWidget(QWidget):
     """
-    Augmented Reality HUD overlay drawn on top of video frames using OpenCV.
-
-    Signals flow:
-        VideoReceiver.sig_frame  →  self.set_frame(frame)
-        Telemetry source         →  self.update_telemetry(...)
-        AI pipeline              →  self.set_detections(detections)
+    Augmented Reality HUD overlay drawn on top of video frames using OpenCV
+    with Live Video Filters and Integrated Side Panels.
     """
+    # --- Signals for Action & Filter integration ---
+    sig_snapshot_requested = pyqtSignal()
+    sig_record_requested = pyqtSignal()
+    sig_popout_requested = pyqtSignal()
+    sig_filter_changed = pyqtSignal(str)
 
     # Telemetry defaults
     _TELEM_DEFAULTS = dict(
@@ -241,8 +245,11 @@ class ARHUDWidget(QWidget):
         self._warning_level: str = ""   # "warn" | "critical" | ""
         self._warning_until: float = 0.0
 
-        # --- HUD toggle ---
+        # --- HUD toggle & Video Filter state ---
         self._hud_enabled: bool = True
+        self._active_filter: str = "NORMAL"
+        self._is_recording: bool = False
+        self._rec_start_time: float = 0.0
 
         # --- Last frame (BGR numpy array) ---
         self._last_frame: Optional[np.ndarray] = None
@@ -254,38 +261,374 @@ class ARHUDWidget(QWidget):
     # UI Setup
     # ------------------------------------------------------------------
     def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(2)
 
-        # Primary video display label
+        # ── Top Drawer Toggle Bar (Sleek edge tabs) ──
+        toggle_bar = QHBoxLayout()
+        toggle_bar.setContentsMargins(2, 2, 2, 2)
+        toggle_bar.setSpacing(4)
+
+        self._btn_left_toggle = QPushButton("⚙️ TOOLS & FILTERS ▶", self)
+        self._btn_left_toggle.setCheckable(True)
+        self._btn_left_toggle.setToolTip("Click để Ẩn / Hiện thanh công cụ & Bộ lọc Video")
+        self._btn_left_toggle.setStyleSheet("""
+            QPushButton {
+                background: rgba(12, 23, 39, 0.85);
+                color: #00FF9D;
+                border: 1px solid #1D3554;
+                border-radius: 4px;
+                padding: 3px 8px;
+                font-family: 'Rajdhani', 'Segoe UI', sans-serif;
+                font-weight: bold;
+                font-size: 10px;
+            }
+            QPushButton:hover {
+                background: #112238;
+                border-color: #00FF9D;
+            }
+            QPushButton:checked {
+                background: rgba(0, 255, 157, 0.25);
+                color: #FFFFFF;
+                border-color: #00FF9D;
+            }
+        """)
+        self._btn_left_toggle.clicked.connect(self._toggle_left_drawer)
+        toggle_bar.addWidget(self._btn_left_toggle, 0)
+
+        toggle_bar.addStretch(1)
+
+        self._btn_right_toggle = QPushButton("◀ 🧠 AI VISION & STATUS", self)
+        self._btn_right_toggle.setCheckable(True)
+        self._btn_right_toggle.setToolTip("Click để Ẩn / Hiện bảng thống kê AI & REC Timer")
+        self._btn_right_toggle.setStyleSheet("""
+            QPushButton {
+                background: rgba(12, 23, 39, 0.85);
+                color: #00E5FF;
+                border: 1px solid #1D3554;
+                border-radius: 4px;
+                padding: 3px 8px;
+                font-family: 'Rajdhani', 'Segoe UI', sans-serif;
+                font-weight: bold;
+                font-size: 10px;
+            }
+            QPushButton:hover {
+                background: #112238;
+                border-color: #00E5FF;
+            }
+            QPushButton:checked {
+                background: rgba(0, 229, 255, 0.25);
+                color: #FFFFFF;
+                border-color: #00E5FF;
+            }
+        """)
+        self._btn_right_toggle.clicked.connect(self._toggle_right_drawer)
+        toggle_bar.addWidget(self._btn_right_toggle, 0)
+
+        main_layout.addLayout(toggle_bar, stretch=0)
+
+        # Central Box containing Left Dock + Video Label + Right Dash
+        center_box = QHBoxLayout()
+        center_box.setContentsMargins(0, 0, 0, 0)
+        center_box.setSpacing(3)
+
+        # ── 1. LEFT DOCK (Camera Actions + Live Video Filters) ──
+        self._left_dock = QFrame(self)
+        self._left_dock.setObjectName("left_dock")
+        self._left_dock.setFixedWidth(100)
+        self._left_dock.setVisible(False)  # Default Collapsed -> 100% Video Width
+        self._left_dock.setStyleSheet("""
+            QFrame#left_dock {
+                background-color: rgba(6, 11, 20, 0.90);
+                border: 1px solid #14283C;
+                border-radius: 6px;
+            }
+            QLabel {
+                color: #00E5FF;
+                font-family: 'Rajdhani', 'Segoe UI', sans-serif;
+                font-weight: bold;
+                font-size: 9px;
+                letter-spacing: 0.5px;
+            }
+            QPushButton {
+                background: #0C1727;
+                color: #A0B2C6;
+                border: 1px solid #1D3554;
+                border-radius: 4px;
+                padding: 4px 2px;
+                font-family: 'Rajdhani', 'Segoe UI', sans-serif;
+                font-weight: bold;
+                font-size: 9px;
+                text-align: center;
+            }
+            QPushButton:hover {
+                background: #112238;
+                color: #00FF9D;
+                border-color: #00FF9D;
+            }
+            QPushButton:checked {
+                background: rgba(0, 255, 157, 0.2);
+                color: #00FF9D;
+                border: 1px solid #00FF9D;
+            }
+        """)
+
+        dock_lay = QVBoxLayout(self._left_dock)
+        dock_lay.setContentsMargins(3, 4, 3, 4)
+        dock_lay.setSpacing(3)
+
+        # Header ACTIONS
+        lbl_act = QLabel("🎮 ACTIONS")
+        dock_lay.addWidget(lbl_act)
+
+        # Action buttons
+        self.btn_snap = QPushButton("📸 SNAP")
+        self.btn_snap.setToolTip("Chụp ảnh snapshot (PNG)")
+        self.btn_snap.clicked.connect(lambda: self.sig_snapshot_requested.emit())
+        dock_lay.addWidget(self.btn_snap)
+
+        self.btn_rec = QPushButton("🔴 REC")
+        self.btn_rec.setToolTip("Bật / Tắt Ghi hình (MP4)")
+        self.btn_rec.clicked.connect(lambda: self.sig_record_requested.emit())
+        dock_lay.addWidget(self.btn_rec)
+
+        self.btn_hud_toggle = QPushButton("👁️ AR HUD")
+        self.btn_hud_toggle.setCheckable(True)
+        self.btn_hud_toggle.setChecked(True)
+        self.btn_hud_toggle.setToolTip("Bật / Tắt kính AR Telemetry")
+        self.btn_hud_toggle.clicked.connect(self._on_hud_toggle_clicked)
+        dock_lay.addWidget(self.btn_hud_toggle)
+
+        self.btn_popout = QPushButton("🗗 POPOUT")
+        self.btn_popout.setToolTip("Phóng to Video ra cửa sổ riêng")
+        self.btn_popout.clicked.connect(lambda: self.sig_popout_requested.emit())
+        dock_lay.addWidget(self.btn_popout)
+
+        # Separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #14283C;")
+        dock_lay.addWidget(sep)
+
+        # Header FILTERS
+        lbl_filt = QLabel("🎨 FILTERS")
+        dock_lay.addWidget(lbl_filt)
+
+        # Filter buttons group
+        self._filter_btn_group = QButtonGroup(self)
+        self._filter_btn_group.setExclusive(True)
+
+        filters = [
+            ("NORMAL", "🟢 NORMAL"),
+            ("UNDERWATER", "🌊 UNDERW"),
+            ("NIGHT_VISION", "🌙 NIGHT"),
+            ("THERMAL", "🔥 THERM"),
+            ("EDGE", "📐 EDGE"),
+        ]
+
+        for mode_key, btn_label in filters:
+            btn = QPushButton(btn_label)
+            btn.setCheckable(True)
+            btn.setProperty("filter_key", mode_key)
+            if mode_key == "NORMAL":
+                btn.setChecked(True)
+            btn.clicked.connect(lambda checked, k=mode_key: self.set_active_filter(k))
+            self._filter_btn_group.addButton(btn)
+            dock_lay.addWidget(btn)
+
+        dock_lay.addStretch()
+        center_box.addWidget(self._left_dock, 0)
+
+        # ── 2. CENTER VIDEO LABEL (Takes 100% Space when Drawers are Collapsed) ──
         self._video_label = QLabel(self)
         self._video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._video_label.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-        )
-        self._video_label.setStyleSheet(
-            "background-color: #0a0a0a;"
-            "border: 1px solid #1e3a4a;"
-        )
-        self._video_label.setMinimumSize(320, 240)
-        layout.addWidget(self._video_label, stretch=1)
+        self._video_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._video_label.setStyleSheet("background-color: #040810; border-radius: 4px;")
+        self._video_label.setMinimumSize(240, 180)
+        center_box.addWidget(self._video_label, 1)
+
+        # ── 3. RIGHT AI DASHBOARD & REC STATUS ──
+        self._right_dash = QFrame(self)
+        self._right_dash.setObjectName("right_dash")
+        self._right_dash.setFixedWidth(120)
+        self._right_dash.setVisible(False)  # Default Collapsed -> 100% Video Width
+        self._right_dash.setStyleSheet("""
+            QFrame#right_dash {
+                background-color: rgba(6, 11, 20, 0.90);
+                border: 1px solid #14283C;
+                border-radius: 6px;
+            }
+            QLabel {
+                font-family: 'Rajdhani', 'Segoe UI', sans-serif;
+            }
+        """)
+
+        dash_lay = QVBoxLayout(self._right_dash)
+        dash_lay.setContentsMargins(4, 4, 4, 4)
+        dash_lay.setSpacing(3)
+
+        # AI Header
+        lbl_ai_hdr = QLabel("🧠 AI VISION")
+        lbl_ai_hdr.setStyleSheet("color:#00E5FF; font-weight:bold; font-size:9px; letter-spacing:0.5px;")
+        dash_lay.addWidget(lbl_ai_hdr)
+
+        self._lbl_ai_status = QLabel("YOLOv8: READY")
+        self._lbl_ai_status.setStyleSheet("color:#7ECFFF; font-weight:bold; font-size:9px;")
+        dash_lay.addWidget(self._lbl_ai_status)
+
+        # Detections list
+        self._lbl_det_list = QLabel("No objects")
+        self._lbl_det_list.setWordWrap(True)
+        self._lbl_det_list.setStyleSheet("color:#A0B2C6; font-size:9px; line-height:1.2;")
+        dash_lay.addWidget(self._lbl_det_list)
+
+        # Separator
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setStyleSheet("color: #14283C;")
+        dash_lay.addWidget(sep2)
+
+        # REC Timer Section
+        lbl_rec_hdr = QLabel("⏱️ STATUS")
+        lbl_rec_hdr.setStyleSheet("color:#00E5FF; font-weight:bold; font-size:9px; letter-spacing:0.5px;")
+        dash_lay.addWidget(lbl_rec_hdr)
+
+        self._lbl_rec_timer = QLabel("REC: OFF")
+        self._lbl_rec_timer.setStyleSheet("color:#7ECFFF; font-weight:bold; font-size:9px;")
+        dash_lay.addWidget(self._lbl_rec_timer)
+
+        self._lbl_active_filter = QLabel("FILTER: NORMAL")
+        self._lbl_active_filter.setStyleSheet("color:#FFC800; font-size:9px; font-weight:bold;")
+        dash_lay.addWidget(self._lbl_active_filter)
+
+        dash_lay.addStretch()
+        center_box.addWidget(self._right_dash, 0)
+
+        main_layout.addLayout(center_box, stretch=1)
 
         # Secondary info bar below video (AI summary)
         self._info_label = QLabel("AI: No detections", self)
         self._info_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        self._info_label.setFixedHeight(22)
+        self._info_label.setFixedHeight(20)
         self._info_label.setStyleSheet(
-            "background-color: #0d1b22;"
+            "background-color: #0A1220;"
             "color: #7ecfff;"
             "font-family: 'Consolas', monospace;"
-            "font-size: 11px;"
+            "font-size: 10px;"
             "padding-left: 6px;"
             "border-top: 1px solid #1e3a4a;"
         )
-        layout.addWidget(self._info_label, stretch=0)
+        main_layout.addWidget(self._info_label, stretch=0)
 
-        self.setLayout(layout)
+        self.setLayout(main_layout)
+
+    def _toggle_left_drawer(self, checked: bool):
+        self._left_dock.setVisible(checked)
+        self._btn_left_toggle.setText("◀ TOOLS & FILTERS" if checked else "⚙️ TOOLS & FILTERS ▶")
+
+    def _toggle_right_drawer(self, checked: bool):
+        self._right_dash.setVisible(checked)
+        self._btn_right_toggle.setText("🧠 AI VISION & STATUS ▶" if checked else "◀ 🧠 AI VISION & STATUS")
+
+    def _on_hud_toggle_clicked(self, checked: bool):
+        self._hud_enabled = checked
+
+    def set_active_filter(self, filter_key: str):
+        self._active_filter = filter_key
+        self._lbl_active_filter.setText(f"FILTER: {filter_key}")
+        self.sig_filter_changed.emit(filter_key)
+        for btn in self._filter_btn_group.buttons():
+            if btn.property("filter_key") == filter_key:
+                btn.setChecked(True)
+                break
+
+    def set_recording_status(self, is_recording: bool):
+        self._is_recording = bool(is_recording)
+        if is_recording:
+            self._rec_start_time = time.monotonic()
+            self.btn_rec.setStyleSheet("""
+                background: #800;
+                color: #FF4040;
+                border: 1px solid #FF4040;
+                border-radius: 4px;
+                padding: 4px 2px;
+                font-family: 'Rajdhani', 'Segoe UI', sans-serif;
+                font-weight: bold;
+                font-size: 9px;
+            """)
+            self.btn_rec.setText("🔴 REC ON")
+        else:
+            self.btn_rec.setStyleSheet("")
+            self.btn_rec.setText("🔴 REC")
+            self._lbl_rec_timer.setText("REC: OFF")
+            self._lbl_rec_timer.setStyleSheet("color:#7ECFFF; font-weight:bold; font-size:9px;")
+
+    def _apply_filter(self, frame: np.ndarray, filter_mode: str) -> np.ndarray:
+        if filter_mode == "NORMAL" or not filter_mode:
+            return frame
+        cv2 = _get_cv2()
+        if cv2 is None:
+            return frame
+
+        try:
+            if filter_mode == "UNDERWATER":
+                # Red channel recovery + CLAHE contrast boost on L channel
+                lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+                l, a, b = cv2.split(lab)
+                clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+                l_eval = clahe.apply(l)
+                lab_eval = cv2.merge((l_eval, a, b))
+                bgr = cv2.cvtColor(lab_eval, cv2.COLOR_LAB2BGR)
+                blue, green, red = cv2.split(bgr)
+                red = cv2.addWeighted(red, 1.35, green, 0.05, 0)
+                return cv2.merge((blue, green, red))
+
+            elif filter_mode == "NIGHT_VISION":
+                # Green night vision boost + contrast boost
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+                g_boost = clahe.apply(gray)
+                zeros = np.zeros_like(g_boost)
+                return cv2.merge((zeros, g_boost, zeros))
+
+            elif filter_mode == "THERMAL":
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                return cv2.applyColorMap(gray, cv2.COLORMAP_JET)
+
+            elif filter_mode == "EDGE":
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                blur = cv2.GaussianBlur(gray, (3, 3), 0)
+                edges = cv2.Canny(blur, 50, 150)
+                cyan_edges = cv2.merge((edges, edges, np.zeros_like(edges)))
+                return cv2.addWeighted(frame, 0.4, cyan_edges, 0.8, 0)
+
+        except Exception:
+            pass
+        return frame
+
+    def _update_dash_panel(self):
+        # REC timer
+        if self._is_recording and self._rec_start_time > 0:
+            elapsed = int(time.monotonic() - self._rec_start_time)
+            m, s = divmod(elapsed, 60)
+            h, m = divmod(m, 60)
+            self._lbl_rec_timer.setText(f"🔴 {h:02d}:{m:02d}:{s:02d}")
+            self._lbl_rec_timer.setStyleSheet("color:#FF4040; font-weight:bold; font-size:9px;")
+
+        # AI Detections list
+        if self._detections:
+            lines = []
+            for d in self._detections[:3]:  # Top 3
+                conf_val = getattr(d, 'confidence', getattr(d, 'conf', 0.0))
+                lines.append(f"• {d.class_name.upper()} {int(conf_val * 100)}%")
+            self._lbl_det_list.setText("\n".join(lines))
+            self._lbl_ai_status.setText(f"AI: {len(self._detections)} DETECTS")
+            self._lbl_ai_status.setStyleSheet("color:#00FF9D; font-weight:bold; font-size:9px;")
+        else:
+            self._lbl_det_list.setText("No objects")
+            self._lbl_ai_status.setText("YOLOv8: READY")
+            self._lbl_ai_status.setStyleSheet("color:#7ECFFF; font-weight:bold; font-size:9px;")
 
     # ------------------------------------------------------------------
     # Public API
@@ -293,23 +636,30 @@ class ARHUDWidget(QWidget):
     def set_frame(self, frame: np.ndarray):
         """
         Receive a BGR frame from the video receiver.
-        Draws HUD overlay and displays via QPixmap.
+        Applies filter, draws HUD overlay, and displays via QPixmap.
         Thread-safe: must be called from main thread (Qt slot).
         """
         if frame is None or frame.size == 0:
             return
 
-        # Work on a copy so we don't mutate source
         frame_copy = frame.copy()
         self._last_frame = frame_copy
 
-        if self._hud_enabled:
-            rendered = self._draw_hud(frame_copy)
-        else:
-            rendered = frame_copy
+        # 1. Apply active video filter
+        filtered_frame = self._apply_filter(frame_copy, self._active_filter)
 
+        # 2. Render HUD overlay
+        if self._hud_enabled:
+            rendered = self._draw_hud(filtered_frame)
+        else:
+            rendered = filtered_frame
+
+        # 3. Display frame
         self._display_frame(rendered)
+
+        # 4. Update info bar & dash panel
         self._update_info_bar()
+        self._update_dash_panel()
 
     def update_telemetry(
         self,
@@ -371,12 +721,15 @@ class ARHUDWidget(QWidget):
     # Internal: Display helpers
     # ------------------------------------------------------------------
     def _display_frame(self, bgr_frame: np.ndarray):
-        """Convert BGR numpy array → QPixmap and display in QLabel."""
+        """Convert BGR numpy array → QPixmap and display in QLabel.
+
+        Giữ nguyên tỉ lệ gốc (không bóp méo). Phần dư blend với
+        nền tối #060B14 nên không nhìn thấy viền đen.
+        """
         cv2 = _get_cv2()
         if cv2 is not None:
             rgb = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
         else:
-            # Fallback: assume it might already be RGB or just display raw
             rgb = bgr_frame
 
         h, w, ch = rgb.shape
@@ -384,14 +737,15 @@ class ARHUDWidget(QWidget):
         qimg = QImage(rgb.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
         pixmap = QPixmap.fromImage(qimg)
 
-        # Scale to label keeping aspect ratio
+        # Scale giữ tỉ lệ gốc (4:3 / 16:9), không bóp méo, không làm lệch AI box
         label_size = self._video_label.size()
-        scaled = pixmap.scaled(
-            label_size,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self._video_label.setPixmap(scaled)
+        if label_size.width() > 10 and label_size.height() > 10:
+            scaled = pixmap.scaled(
+                label_size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self._video_label.setPixmap(scaled)
 
     def _update_info_bar(self):
         """Update the small AI summary bar below the video."""
@@ -437,8 +791,8 @@ class ARHUDWidget(QWidget):
         if self._warning_msg and time.monotonic() > self._warning_until:
             self.clear_warning()
 
-        # 1. Subtle centre crosshair for target orientation
-        self._draw_crosshair(frame, cv2, cx, cy)
+        # 1. Subtle centre crosshair (disabled per user request)
+        # self._draw_crosshair(frame, cv2, cx, cy)
 
         # 2. AI Detections & Image Analysis (Bounding boxes, class labels, conf %, track IDs)
         self._draw_detections(frame, cv2, h, w)

@@ -913,7 +913,7 @@ class Ui_MainWindow(object):
     def retranslateUi(self, MainWindow):
         _translate = QtCore.QCoreApplication.translate
         MainWindow.setWindowTitle(_translate("MainWindow", "MainWindow"))
-        self.lbl_nameapp.setText(_translate("MainWindow", "E3 LAB"))
+        self.lbl_nameapp.setText(_translate("MainWindow", "CNC NExora"))
         self.lbl_titlename.setText(_translate(
             "MainWindow", "ROV CONTROL SYSTEM"))
         self.lbl_mission.setText(_translate("MainWindow", "MODEL"))
@@ -926,7 +926,7 @@ class Ui_MainWindow(object):
         self.lbl_connection.setText(_translate("MainWindow", "🛜 Connection"))
         self.lbl_connection_value.setText(_translate("MainWindow", "STRONG"))
         self.lbl_info_team.setText(_translate("MainWindow", "TEAM"))
-        self.lbl_info_value.setText(_translate("MainWindow", "E3 LAB"))
+        self.lbl_info_value.setText(_translate("MainWindow", "CNC NExora"))
         self.lbl_time.setText(_translate("MainWindow", "14:35:42"))
         self.lbl_date.setText(_translate("MainWindow", "VN 2026/07/06"))
         self.lbl_simulate_camera.setText(

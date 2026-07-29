@@ -45,6 +45,7 @@ from PyQt6.QtWidgets import (
     QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView, QSplitter,
     QTabWidget
 )
+from PyQt6.QtGui import QIcon, QPixmap
 
 # --- Bản đồ phím bàn phím ---
 KEY_MAP = {
@@ -149,9 +150,14 @@ class ROVMainWindow(QMainWindow):
         # --- Setup UI ---
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
-
+        # Tự động lấy đường dẫn tuyệt đối một cách an toàn
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        logo_path = os.path.join(current_dir, "GUI", "img", "logocompany.jpg")
+        
+        self.ui.pbtn_iconheader.setIcon(QIcon(logo_path))
+        self.ui.pbtn_iconheader.setIconSize(QtCore.QSize(45, 45))
         # --- Trạng thái ---
-        self._current_model_name = "6DC"
+        self._current_model_name = "3DC"
         self._rov_model = None
         self._physics = None
         self._mav_worker = None
@@ -226,8 +232,8 @@ class ROVMainWindow(QMainWindow):
         # --- Kết nối signal/slot của UI gốc ---
         # Chặn signal trước để tránh currentTextChanged bắn sớm
         self.ui.cb_mission.blockSignals(True)
-        # Set combobox về 6DC (index 1 theo guirov.py: 0="3DC", 1="6DC")
-        idx = self.ui.cb_mission.findText("6DC")
+        # Set combobox về 3DC (index 0 theo guirov.py: 0="3DC", 1="6DC")
+        idx = self.ui.cb_mission.findText("3DC")
         if idx >= 0:
             self.ui.cb_mission.setCurrentIndex(idx)
         self.ui.cb_mission.blockSignals(False)
@@ -235,7 +241,7 @@ class ROVMainWindow(QMainWindow):
         self._connect_ui_signals()
 
         # --- Khởi tạo model ROV ---
-        self._switch_model("6DC")
+        self._switch_model("3DC")
 
         # --- Clock/Date timer ---
         self._clock_timer = QTimer(self)
@@ -419,46 +425,18 @@ class ROVMainWindow(QMainWindow):
             if hasattr(self.ui, 'opw_camera'):
                 self.ui.opw_camera.hide()
             cam_layout = self.ui.verticalLayout_5
-
-            # Tạo thanh chọn nguồn video nhanh trực tiếp trên GUI
-            row_src = QtWidgets.QWidget()
-            h_box = QtWidgets.QHBoxLayout(row_src)
-            h_box.setContentsMargins(2, 2, 2, 2)
-
-            lbl_src = QtWidgets.QLabel("Nguồn Video:")
-            lbl_src.setStyleSheet(
-                "color:#00E5FF; font-weight:bold; font-size:11px; text-transform:uppercase; letter-spacing:0.5px;")
-
-            self.cb_quick_vid_src = QtWidgets.QComboBox()
-            self.cb_quick_vid_src.addItems([
-                "💻 Laptop Webcam (Cam 0)",
-                "📡 ROV UDP Stream (Port 5620)",
-                "🌐 RTSP Stream",
-                "📁 Video File"
-            ])
-            self.cb_quick_vid_src.setStyleSheet(
-                "QComboBox{background:#0C1727; color:#00FF9D; border:1px solid #1D3554; "
-                "border-radius:6px; padding:3px 8px; font-weight:bold; font-size:11px;}"
-                "QComboBox:hover{border:1px solid #00FF9D; background-color:#112238;}"
-                "QComboBox QAbstractItemView{background-color:#0A1220; color:#00FF9D; border:1px solid #00FF9D; border-radius:6px; selection-background-color:rgba(0,255,157,0.25); selection-color:#FFFFFF; padding:4px;}"
-            )
-            src_key = self.settings.get('video_source', 'webcam')
-            map_idx = {'webcam': 0, 'udp_h264': 1, 'rtsp': 2, 'file': 3}
-            self.cb_quick_vid_src.setCurrentIndex(map_idx.get(src_key, 0))
-            self.cb_quick_vid_src.currentIndexChanged.connect(
-                self._on_quick_video_source_changed)
-
-            h_box.addWidget(lbl_src)
-            h_box.addWidget(self.cb_quick_vid_src)
-            h_box.addStretch()
-
-            cam_layout.addWidget(row_src)
-
             # Tạo AR HUD Widget nhúng trực tiếp vào main GUI
             self._ar_hud = ARHUDWidget(parent=self.ui.frm_simulate_camera)
             self._ar_hud.set_hud_enabled(
                 self.settings.get('ar_hud_enabled', True))
-            cam_layout.addWidget(self._ar_hud)
+            cam_layout.addWidget(self._ar_hud, 1)
+
+            # Đặt lại stretch cho verticalLayout_5:
+            # Item 0 (lbl_simulate_camera) = 0, Item 1 (opw_camera) = 0, Item 2 (_ar_hud) = 1
+            cam_layout.setStretch(0, 0)
+            if cam_layout.count() > 1:
+                cam_layout.setStretch(1, 0)
+            cam_layout.setStretch(cam_layout.indexOf(self._ar_hud), 1)
         else:
             # Fallback tạo cửa sổ nổi nếu không tìm thấy frm_simulate_camera
             self._ar_hud = ARHUDWidget(parent=None)
@@ -466,6 +444,12 @@ class ROVMainWindow(QMainWindow):
             self._ar_hud.resize(target_w + 20, target_h + 60)
             self._ar_hud.set_hud_enabled(
                 self.settings.get('ar_hud_enabled', True))
+
+        # Kết nối AR HUD Widget Action signals với main window logic
+        if self._ar_hud:
+            self._ar_hud.sig_snapshot_requested.connect(self._take_snapshot)
+            self._ar_hud.sig_record_requested.connect(self._on_camera_button)
+            self._ar_hud.sig_popout_requested.connect(self._popout_video_window)
 
         # Kết nối video → HUD + ghi hình
         def _on_frame_received(frame):
@@ -1270,11 +1254,15 @@ class ROVMainWindow(QMainWindow):
             self.ui.pbtn_camera.setToolTip(
                 f"Recording... Click để dừng. File: {os.path.basename(path)}")
             print(f"[Camera] Recording started: {path}")
+            if self._ar_hud:
+                self._ar_hud.set_recording_status(True)
             if hasattr(self, 'power_widget') and self.power_widget:
                 self.power_widget.add_log(
                     f"🔴 Đang ghi hình: {os.path.basename(path)}", "WARNING")
         except Exception as e:
             self._is_recording = False
+            if self._ar_hud:
+                self._ar_hud.set_recording_status(False)
             QtWidgets.QMessageBox.critical(self, "Lỗi Recording", str(e))
 
     def _stop_recording(self):
@@ -1283,6 +1271,8 @@ class ROVMainWindow(QMainWindow):
         if self._video_writer is not None:
             self._video_writer.release()
             self._video_writer = None
+        if self._ar_hud:
+            self._ar_hud.set_recording_status(False)
         # Khôi phục style nút
         self.ui.pbtn_camera.setStyleSheet("")
         self.ui.pbtn_camera.setToolTip("Chụp ảnh / Ghi video")
@@ -1600,9 +1590,9 @@ class ROVMainWindow(QMainWindow):
         if key_sw_r in self._pressed_keys:
             sway += sp
         if key_asc in self._pressed_keys:
-            heave += sp
-        if key_desc in self._pressed_keys:
             heave -= sp
+        if key_desc in self._pressed_keys:
+            heave += sp
         if key_left in self._pressed_keys:
             yaw -= sp
         if key_right in self._pressed_keys:
@@ -1749,7 +1739,7 @@ def main():
             app.setStyleSheet(f.read())
 
     window = ROVMainWindow(settings)
-    window.setWindowTitle("E3 LAB — ROV CONTROL SYSTEM v1.0")
+    window.setWindowTitle("CNC NExora — ROV CONTROL SYSTEM")
     window.showMaximized()  # Tự động mở 100% toàn màn hình
 
     sys.exit(app.exec())
