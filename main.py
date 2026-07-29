@@ -865,7 +865,21 @@ class ROVMainWindow(QMainWindow):
         self._slam_worker.sig_slam_points.connect(self._on_slam_points)
         self._slam_worker.start_worker()
 
+        # ── Gamepad / Joystick Worker ────────────────────────────
+        try:
+            from GUI.input_handler import GamepadWorker
+            self._gamepad_worker = GamepadWorker(deadzone=0.15, poll_interval_ms=16, parent=self)
+            self._gamepad_worker.sig_gamepad_connected.connect(self._on_gamepad_connected)
+            self._gamepad_worker.sig_axis_moved.connect(self._on_gamepad_axis_moved)
+            self._gamepad_worker.sig_button_pressed.connect(self._on_gamepad_button_pressed)
+            self._gamepad_worker.start()
+        except Exception as exc:
+            print(f"[Main] Error initializing GamepadWorker: {exc}")
+            self._gamepad_worker = None
+
     def _stop_workers(self):
+        if hasattr(self, '_gamepad_worker') and self._gamepad_worker:
+            self._gamepad_worker.stop()
         if self._mav_worker:
             self._mav_worker.stop_worker()
         if self._slam_worker:
@@ -1142,6 +1156,42 @@ class ROVMainWindow(QMainWindow):
         # Gửi lệnh MAVLink khi kết nối
         if self._connected and self._mav_worker:
             self._send_mavlink_control()
+
+    # ── Gamepad Event Handlers ────────────────────────────────
+    def _on_gamepad_connected(self, connected: bool, name: str):
+        """Thông báo kết nối tay cầm Gamepad."""
+        if hasattr(self, 'power_widget') and self.power_widget:
+            if connected:
+                self.power_widget.add_log(f"🎮 Đã kết nối Tay cầm: {name}", "SUCCESS")
+            else:
+                self.power_widget.add_log("🎮 Mất kết nối Tay cầm Gamepad", "WARNING")
+
+    def _on_gamepad_axis_moved(self, ctrl: dict):
+        """Xử lý tín hiệu cần gạt analog từ tay cầm Gamepad."""
+        scale = self._speed_scale
+        self._set_ctrl(
+            surge=ctrl.get("surge", 0.0) * scale,
+            sway=ctrl.get("sway", 0.0) * scale,
+            heave=ctrl.get("heave", 0.0) * scale,
+            yaw=ctrl.get("yaw", 0.0) * scale,
+        )
+
+    def _on_gamepad_button_pressed(self, action: str):
+        """Xử lý các phím bấm trên tay cầm Gamepad."""
+        if action == "snapshot":
+            self._take_snapshot()
+        elif action == "record":
+            self._on_camera_button()
+        elif action == "arm":
+            self._toggle_arm()
+        elif action == "lights":
+            self._mav_lights(True)
+        elif action == "speed_up":
+            self._speed_up()
+        elif action == "speed_down":
+            self._speed_down()
+        elif action == "emergency_stop":
+            self._emergency_stop()
 
     def _send_mavlink_control(self):
         """Chuyển đổi ctrl [-1,1] → MANUAL_CONTROL [-1000, 1000]."""
