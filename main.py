@@ -153,7 +153,7 @@ class ROVMainWindow(QMainWindow):
         # Tự động lấy đường dẫn tuyệt đối một cách an toàn
         current_dir = os.path.dirname(os.path.abspath(__file__))
         logo_path = os.path.join(current_dir, "GUI", "img", "logocompany.jpg")
-        
+
         self.ui.pbtn_iconheader.setIcon(QIcon(logo_path))
         self.ui.pbtn_iconheader.setIconSize(QtCore.QSize(45, 45))
         # --- Trạng thái ---
@@ -449,7 +449,8 @@ class ROVMainWindow(QMainWindow):
         if self._ar_hud:
             self._ar_hud.sig_snapshot_requested.connect(self._take_snapshot)
             self._ar_hud.sig_record_requested.connect(self._on_camera_button)
-            self._ar_hud.sig_popout_requested.connect(self._popout_video_window)
+            self._ar_hud.sig_popout_requested.connect(
+                self._popout_video_window)
 
         # Kết nối video → HUD + ghi hình
         def _on_frame_received(frame):
@@ -526,9 +527,11 @@ class ROVMainWindow(QMainWindow):
                 if not path:
                     # User cancel → quay lại nguồn cũ
                     old_src = self.settings.get('video_source', 'webcam')
-                    map_idx = {'webcam': 0, 'udp_h264': 1, 'rtsp': 2, 'file': 3}
+                    map_idx = {'webcam': 0, 'udp_h264': 1,
+                               'rtsp': 2, 'file': 3}
                     self.cb_quick_vid_src.blockSignals(True)
-                    self.cb_quick_vid_src.setCurrentIndex(map_idx.get(old_src, 0))
+                    self.cb_quick_vid_src.setCurrentIndex(
+                        map_idx.get(old_src, 0))
                     self.cb_quick_vid_src.blockSignals(False)
                     return
                 self.settings['video_file'] = path
@@ -868,10 +871,14 @@ class ROVMainWindow(QMainWindow):
         # ── Gamepad / Joystick Worker ────────────────────────────
         try:
             from GUI.input_handler import GamepadWorker
-            self._gamepad_worker = GamepadWorker(deadzone=0.15, poll_interval_ms=16, parent=self)
-            self._gamepad_worker.sig_gamepad_connected.connect(self._on_gamepad_connected)
-            self._gamepad_worker.sig_axis_moved.connect(self._on_gamepad_axis_moved)
-            self._gamepad_worker.sig_button_pressed.connect(self._on_gamepad_button_pressed)
+            self._gamepad_worker = GamepadWorker(
+                deadzone=0.15, poll_interval_ms=16, parent=self)
+            self._gamepad_worker.sig_gamepad_connected.connect(
+                self._on_gamepad_connected)
+            self._gamepad_worker.sig_axis_moved.connect(
+                self._on_gamepad_axis_moved)
+            self._gamepad_worker.sig_button_pressed.connect(
+                self._on_gamepad_button_pressed)
             self._gamepad_worker.start()
         except Exception as exc:
             print(f"[Main] Error initializing GamepadWorker: {exc}")
@@ -1162,9 +1169,11 @@ class ROVMainWindow(QMainWindow):
         """Thông báo kết nối tay cầm Gamepad."""
         if hasattr(self, 'power_widget') and self.power_widget:
             if connected:
-                self.power_widget.add_log(f"🎮 Đã kết nối Tay cầm: {name}", "SUCCESS")
+                self.power_widget.add_log(
+                    f"🎮 Đã kết nối Tay cầm: {name}", "SUCCESS")
             else:
-                self.power_widget.add_log("🎮 Mất kết nối Tay cầm Gamepad", "WARNING")
+                self.power_widget.add_log(
+                    "🎮 Mất kết nối Tay cầm Gamepad", "WARNING")
 
     def _on_gamepad_axis_moved(self, ctrl: dict):
         """Xử lý tín hiệu cần gạt analog từ tay cầm Gamepad."""
@@ -1355,7 +1364,7 @@ class ROVMainWindow(QMainWindow):
         """
         # 1. Cập nhật Video Receiver nếu có
         if self._video_rx:
-            src = self.settings.get('video_source', 'webcam')
+            src = self.settings.get('video_source', 'udp_h264')
             if src == 'udp_h264':
                 port = int(self.settings.get('udp_video_port', 5620))
                 self._video_rx.set_source(VideoSource.UDP_H264, port)
@@ -1757,7 +1766,7 @@ def main():
         "gcs_lat":       0.0,
         "gcs_lng":       0.0,
         # Video
-        "video_source":  "webcam",
+        "video_source":  "udp_h264",
         "udp_video_port": 5620,
         "rtsp_url":      "rtsp://192.168.2.2:8554/video",
         "video_fps":     30,

@@ -390,26 +390,51 @@ class VideoReceiver(QThread):
         """
         try:
             if source_type is VideoSource.UDP_H264:
-                # ── UDP H.264 RTP stream (ROV → GCS) ──────────────────
+                # ── UDP H.264 / MPEG-TS Stream (ROV → GCS) ─────────────
                 port = int(url_or_index) if str(url_or_index).isdigit() else 5620
-                # Thử GStreamer pipeline trước (latency thấp hơn)
-                gst_pipeline = (
-                    f"udpsrc port={port} caps=\"application/x-rtp,media=video,"
-                    f"clock-rate=90000,encoding-name=H264,payload=96\" "
-                    f"! rtph264depay ! h264parse ! avdec_h264 "
-                    f"! videoconvert ! video/x-raw,format=BGR "
-                    f"! appsink drop=1 max-buffers=1 sync=false"
+                cap = None
+
+                # 1. Thử GStreamer MPEG-TS pipeline (tương thích mpegtsmux của Pi 5)
+                gst_ts = (
+                    f"udpsrc port={port} buffer-size=524288 ! "
+                    f"tsdemux ! h264parse ! avdec_h264 ! "
+                    f"videoconvert ! video/x-raw,format=BGR ! "
+                    f"appsink drop=1 max-buffers=1 sync=false"
                 )
-                cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
-                if not cap.isOpened():
-                    # Fallback: FFmpeg UDP
-                    print(
-                        "[VideoReceiver] GStreamer unavailable - "
-                        f"falling back to FFmpeg udp://@:{port}"
+                cap = cv2.VideoCapture(gst_ts, cv2.CAP_GSTREAMER)
+
+                if not cap or not cap.isOpened():
+                    # 2. Thử GStreamer Raw H.264 pipeline
+                    gst_raw = (
+                        f"udpsrc port={port} buffer-size=524288 ! "
+                        f"h264parse ! avdec_h264 ! "
+                        f"videoconvert ! video/x-raw,format=BGR ! "
+                        f"appsink drop=1 max-buffers=1 sync=false"
                     )
-                    ffmpeg_url = f"udp://@:{port}"
+                    cap = cv2.VideoCapture(gst_raw, cv2.CAP_GSTREAMER)
+
+                if not cap or not cap.isOpened():
+                    # 3. Thử GStreamer RTP H.264 pipeline
+                    gst_rtp = (
+                        f"udpsrc port={port} caps=\"application/x-rtp,media=video,"
+                        f"clock-rate=90000,encoding-name=H264,payload=96\" ! "
+                        f"rtph264depay ! h264parse ! avdec_h264 ! "
+                        f"videoconvert ! video/x-raw,format=BGR ! "
+                        f"appsink drop=1 max-buffers=1 sync=false"
+                    )
+                    cap = cv2.VideoCapture(gst_rtp, cv2.CAP_GSTREAMER)
+
+                if not cap or not cap.isOpened():
+                    # 4. Fallback FFmpeg UDP siêu mượt (low-latency zero buffer)
+                    print(
+                        f"[VideoReceiver] GStreamer pipelines unsuccessful — "
+                        f"using FFmpeg fallback for udp://0.0.0.0:{port}"
+                    )
+                    ffmpeg_url = f"udp://0.0.0.0:{port}?overrun_nonfatal=1&fifo_size=5000000"
                     cap = cv2.VideoCapture(ffmpeg_url, cv2.CAP_FFMPEG)
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+                if cap:
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
             elif source_type is VideoSource.RTSP:
                 # Use FFMPEG backend for RTSP - most reliable cross-platform
