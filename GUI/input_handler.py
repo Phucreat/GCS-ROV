@@ -122,28 +122,28 @@ class GamepadWorker(QThread):
 
                 js = self._joystick_obj
 
-                # Read Axes
+                # Read Axes based on controller type (XInput vs DirectInput)
                 num_axes = js.get_numaxes()
-                # Typical XInput / DirectInput axis mapping:
-                # Axis 0: Left Stick X (Sway)
-                # Axis 1: Left Stick Y (Surge - inverted)
-                # Axis 2: Right Stick X or LT
-                # Axis 3: Right Stick Y (Heave - inverted) or RT
-                ax_left_x = self._apply_deadzone(js.get_axis(0)) if num_axes > 0 else 0.0
-                ax_left_y = self._apply_deadzone(-js.get_axis(1)) if num_axes > 1 else 0.0  # Push up = +Surge
-
-                ax_right_x = self._apply_deadzone(js.get_axis(2)) if num_axes > 2 else 0.0
-                ax_right_y = self._apply_deadzone(-js.get_axis(3)) if num_axes > 3 else 0.0
-
-                if num_axes >= 4:
-                    surge = ax_left_y
-                    sway = ax_left_x
-                    yaw = ax_right_x
-                    heave = ax_right_y
+                if num_axes >= 6:
+                    # Xbox 360 / Xbox One / XInput controller (6 axes)
+                    # Axis 0: Left Stick X (Sway)
+                    # Axis 1: Left Stick Y (Surge - push up is negative)
+                    # Axis 3: Right Stick X (Yaw)
+                    # Axis 4: Right Stick Y (Heave - push up is negative)
+                    surge = self._apply_deadzone(-js.get_axis(1))
+                    sway  = self._apply_deadzone(js.get_axis(0))
+                    yaw   = self._apply_deadzone(js.get_axis(3))
+                    heave = self._apply_deadzone(-js.get_axis(4))
+                elif num_axes >= 4:
+                    # Standard 4-axis DirectInput controller
+                    surge = self._apply_deadzone(-js.get_axis(1))
+                    sway  = self._apply_deadzone(js.get_axis(0))
+                    yaw   = self._apply_deadzone(js.get_axis(2))
+                    heave = self._apply_deadzone(-js.get_axis(3))
                 else:
-                    surge = ax_left_y
-                    sway = ax_left_x
-                    yaw = 0.0
+                    surge = self._apply_deadzone(-js.get_axis(1)) if num_axes > 1 else 0.0
+                    sway  = self._apply_deadzone(js.get_axis(0)) if num_axes > 0 else 0.0
+                    yaw   = 0.0
                     heave = 0.0
 
                 # Check D-Pad (Hat 0)
@@ -167,8 +167,10 @@ class GamepadWorker(QThread):
                     pitch=0.0,
                 )
 
-                # Emit axis signal if changed or non-zero
-                if ctrl != self._last_ctrl or any(abs(v) > 0.01 for v in ctrl.values()):
+                # Emit axis signal continuously if non-zero or when returning to zero
+                is_active = any(abs(v) > 0.001 for v in ctrl.values())
+                was_active = any(abs(v) > 0.001 for v in self._last_ctrl.values())
+                if is_active or was_active or ctrl != self._last_ctrl:
                     self._last_ctrl = ctrl
                     self.sig_axis_moved.emit(ctrl)
 

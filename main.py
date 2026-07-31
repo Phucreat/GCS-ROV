@@ -1616,6 +1616,9 @@ class ROVMainWindow(QMainWindow):
     # ----------------------------------------------------------
     def _update_keyboard_controls(self):
         """Đọc trạng thái các phím đang được giữ liên tục và cập nhật lực đẩy."""
+        if not self._pressed_keys:
+            return  # Không có phím bàn phím nào được bấm -> giữ nguyên trạng thái từ Gamepad / GUI
+
         sp = self._speed_scale
         surge = 0.0
         sway = 0.0
