@@ -497,23 +497,35 @@ class ROVMainWindow(QMainWindow):
             lambda e: print(f"[Video] Error: {e}")
         )
 
-        # AI Vision Processor (Feature 2)
-        if HAS_AI and self.settings.get('ai_detection_enabled', False):
+        # AI Vision Processor & Voice Agent (Feature 2 & 2.5)
+        if HAS_AI:
             self._setup_ai_pipeline()
 
-        # Thêm nút mở Video Window cửa sổ nổi vào header
+        # Thêm nút "📹 Cửa sổ Video" và "🤖 AI Control" vào header thanh công cụ chính
         if hasattr(self.ui, 'setup_systeam'):
-            btn_vid = QtWidgets.QPushButton("📹 Cửa sổ Video", self)
-            btn_vid.setStyleSheet(
-                "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #0C3322,stop:1 #072015);"
-                "color:#00FF9D;border:1px solid #00FF9D;border-radius:6px;padding:4px 10px;font-weight:bold;font-size:11px;}"
-                "QPushButton:hover{background:#00FF9D;color:#060B14;border-color:#80FFC9;}"
-            )
-            btn_vid.clicked.connect(self._popout_video_window)
             hdr_layout = self.ui.setup_systeam.parentWidget().layout()
             if hdr_layout:
                 idx = hdr_layout.indexOf(self.ui.setup_systeam)
+
+                # Nút 1: Cửa sổ Video
+                btn_vid = QtWidgets.QPushButton("📹 Cửa sổ Video", self)
+                btn_vid.setStyleSheet(
+                    "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #0C3322,stop:1 #072015);"
+                    "color:#00FF9D;border:1px solid #00FF9D;border-radius:6px;padding:4px 10px;font-weight:bold;font-size:11px;}"
+                    "QPushButton:hover{background:#00FF9D;color:#060B14;border-color:#80FFC9;}"
+                )
+                btn_vid.clicked.connect(self._popout_video_window)
                 hdr_layout.insertWidget(idx, btn_vid)
+
+                # Nút 2: AI Control Panel (Voice Agent + YOLO Vision)
+                btn_ai = QtWidgets.QPushButton("🤖 AI Control", self)
+                btn_ai.setStyleSheet(
+                    "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #142E47,stop:1 #0C1E30);"
+                    "color:#00E5FF;border:1px solid #00E5FF;border-radius:6px;padding:4px 10px;font-weight:bold;font-size:11px;}"
+                    "QPushButton:hover{background:#00E5FF;color:#060B14;border-color:#80FFFF;}"
+                )
+                btn_ai.clicked.connect(self._show_ai_control_panel)
+                hdr_layout.insertWidget(idx, btn_ai)
 
         self._video_rx.start()
 
@@ -604,6 +616,19 @@ class ROVMainWindow(QMainWindow):
         self._popout_dialog = dlg
         dlg.show()
 
+    def _show_ai_control_panel(self):
+        """Mở bảng điều khiển AI Control Panel (Voice Agent + YOLO Vision)."""
+        if not HAS_AI:
+            QtWidgets.QMessageBox.warning(self, "AI Unavailable", "Thư viện AI chưa được cài đặt.")
+            return
+        if self._ai_panel is None:
+            self._setup_ai_pipeline()
+
+        if self._ai_panel:
+            self._ai_panel.show()
+            self._ai_panel.raise_()
+            self._ai_panel.activateWindow()
+
     def _setup_ai_pipeline(self):
         """Khởi tạo AI detection processor và control panel."""
         if not HAS_AI:
@@ -685,9 +710,11 @@ class ROVMainWindow(QMainWindow):
 
                 self._vad_worker.sig_vad_status.connect(_on_vad_status)
 
-                # Connect UI Safety confirmation buttons
+                # Connect UI Safety confirmation buttons & Text command input
                 self._ai_panel.btn_confirm_action.clicked.connect(lambda: self._process_pilot_voice_command("Xác nhận"))
                 self._ai_panel.btn_cancel_action.clicked.connect(lambda: self._process_pilot_voice_command("Hủy"))
+                if hasattr(self._ai_panel, 'sig_voice_command_submitted'):
+                    self._ai_panel.sig_voice_command_submitted.connect(self._process_pilot_voice_command)
 
             # Connect CV Critical Alerts -> Emergency Voice Announcement
             if self._ai_proc and hasattr(self._ai_proc, 'sig_error'):
@@ -703,6 +730,12 @@ class ROVMainWindow(QMainWindow):
             # Start workers
             self._tts_worker.start()
             self._vad_worker.start()
+
+            # Giới thiệu tự động khi khởi động phần mềm
+            welcome_text = "Tôi là CNX Aero, trợ lý ảo sẽ hỗ trợ bạn trong suốt quá trình làm việc."
+            self._tts_worker.speak(welcome_text)
+            if self._ai_panel:
+                self._ai_panel.lbl_agent_speech.setText(f"Agent: {welcome_text}")
 
             if hasattr(self, 'power_widget') and self.power_widget:
                 self.power_widget.add_log("🎙 Trợ lý Giọng nói Offline (VAD+STT+SLM+TTS) đã sẵn sàng", "SUCCESS")

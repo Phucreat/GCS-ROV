@@ -32,6 +32,7 @@ try:
         QGroupBox,
         QHBoxLayout,
         QLabel,
+        QLineEdit,
         QListWidget,
         QListWidgetItem,
         QPushButton,
@@ -53,6 +54,7 @@ except ImportError:
         QGroupBox,
         QHBoxLayout,
         QLabel,
+        QLineEdit,
         QListWidget,
         QListWidgetItem,
         QPushButton,
@@ -279,6 +281,7 @@ class AIControlPanel(QWidget):
     sig_auto_track_enabled = pyqtSignal(bool)
     sig_track_class_changed = pyqtSignal(str)
     sig_track_gain_changed  = pyqtSignal(float)
+    sig_voice_command_submitted = pyqtSignal(str)
 
     # Pre-defined model entries:  (display label,  model file)
     _MODEL_PRESETS = [
@@ -334,6 +337,28 @@ class AIControlPanel(QWidget):
         self.lbl_agent_speech.setWordWrap(True)
         lay.addWidget(self.lbl_agent_speech)
 
+        # QLineEdit Input Row for manual text commands
+        cmd_row = QHBoxLayout()
+        self.txt_voice_cmd = QLineEdit()
+        self.txt_voice_cmd.setPlaceholderText("Nhập câu lệnh (vd: bật đèn 100%)...")
+        self.txt_voice_cmd.setStyleSheet("background:#0C1727; color:#00D4FF; border:1px solid #1D3554; border-radius:4px; padding:4px;")
+        
+        self.btn_send_voice_cmd = QPushButton("💬 Gửi")
+        self.btn_send_voice_cmd.setStyleSheet("background:#00A8FF; color:white; font-weight:bold; min-height:22px;")
+        
+        cmd_row.addWidget(self.txt_voice_cmd, stretch=1)
+        cmd_row.addWidget(self.btn_send_voice_cmd)
+        lay.addLayout(cmd_row)
+
+        def _on_submit_text_cmd():
+            text = self.txt_voice_cmd.text().strip()
+            if text:
+                self.sig_voice_command_submitted.emit(text)
+                self.txt_voice_cmd.clear()
+
+        self.btn_send_voice_cmd.clicked.connect(_on_submit_text_cmd)
+        self.txt_voice_cmd.returnPressed.connect(_on_submit_text_cmd)
+
         # Safety confirmation alert container
         self.grp_safety = QGroupBox("⚠️ HUMAN-IN-THE-LOOP SAFETY")
         self.grp_safety.setStyleSheet("QGroupBox { border: 1px solid #FFC107; background: rgba(255, 193, 7, 0.1); color: #FFC107; font-weight: bold; }")
@@ -368,10 +393,9 @@ class AIControlPanel(QWidget):
         self.chk_enable.setChecked(False)
         lay.addWidget(self.chk_enable)
 
-        # Model selector
+        # Model selector (Tự động quét các file .pt có sẵn trong thư mục dự án)
         self.cmb_model = QComboBox()
-        for label, _ in self._MODEL_PRESETS:
-            self.cmb_model.addItem(label)
+        self._refresh_model_dropdown()
         lay.addWidget(self.cmb_model)
 
         # Browse button
@@ -477,18 +501,46 @@ class AIControlPanel(QWidget):
         self.spn_gain.valueChanged.connect(self.sig_track_gain_changed.emit)
         self.btn_lockon.toggled.connect(self._on_lockon_toggled)
 
-    # ------------------------------------------------------------------ #
-    #  Slots – internal                                                    #
-    # ------------------------------------------------------------------ #
+    def _refresh_model_dropdown(self) -> None:
+        """Tự động quét các file model .pt trong thư mục dự án."""
+        self.cmb_model.blockSignals(True)
+        self.cmb_model.clear()
+        found_models = []
+
+        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        if os.path.isdir(root_dir):
+            for fname in os.listdir(root_dir):
+                if fname.endswith(".pt") or fname.endswith(".engine"):
+                    full = os.path.join(root_dir, fname)
+                    found_models.append((fname, full))
+
+        models_dir = os.path.join(root_dir, "models")
+        if os.path.isdir(models_dir):
+            for root, _, files in os.walk(models_dir):
+                for fname in files:
+                    if fname.endswith(".pt") or fname.endswith(".engine"):
+                        full = os.path.join(root, fname)
+                        rel = os.path.relpath(full, root_dir)
+                        if (rel, full) not in found_models:
+                            found_models.append((rel, full))
+
+        if found_models:
+            for display_name, full_path in found_models:
+                self.cmb_model.addItem(display_name, userData=full_path)
+        else:
+            self.cmb_model.addItem("yolov8n.pt", userData="yolov8n.pt")
+
+        self.cmb_model.addItem("📂 Chọn file model khác...", userData="")
+        self.cmb_model.blockSignals(False)
+
     def _on_detection_toggled(self, enabled: bool) -> None:
         self.sig_detection_enabled.emit(enabled)
 
     def _on_model_selected(self, index: int) -> None:
-        _, model_file = self._MODEL_PRESETS[index]
-        if model_file:
-            self.sig_model_changed.emit(model_file)
+        model_path = self.cmb_model.itemData(index)
+        if model_path:
+            self.sig_model_changed.emit(str(model_path))
         else:
-            # "Custom…" selected → open file dialog automatically
             self._on_browse_model()
 
     def _on_browse_model(self) -> None:

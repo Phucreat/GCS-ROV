@@ -55,9 +55,11 @@ class LocalSLMEngine:
 
     def check_availability(self) -> bool:
         """Check if local Ollama server is active."""
+        if self._available is not None:
+            return self._available
         try:
             req = urllib.request.Request(f"{self._url}/api/tags", headers={"User-Agent": "GCS_ROV"})
-            with urllib.request.urlopen(req, timeout=2.0) as resp:
+            with urllib.request.urlopen(req, timeout=0.3) as resp:
                 if resp.status == 200:
                     self._available = True
                     return True
@@ -76,12 +78,17 @@ class LocalSLMEngine:
         system_instruction = (
             "Bạn là Trợ lý Ảo Co-Pilot cho phần mềm điều khiển robot lặn ROV (GCS ROV Assistant).\n"
             "Nhiệm vụ của bạn: Trả lời ngắn gọn, chính xác bằng tiếng Việt và xuất kết quả định dạng JSON chuẩn.\n"
-            "Các hàm hỗ trợ: set_lights(intensity=0..100), arm_thrusters(), disarm_thrusters(), emergency_stop(), "
-            "read_sop(id='pipeline_inspection'), get_depth(), take_snapshot().\n\n"
-            f"Bối cảnh hệ thống: {system_context}\n"
-            "Hãy xuất JSON theo định dạng:\n"
-            '{"intent": "control", "tool_call": {"action": "set_lights", "params": {"value": 100}}, '
-            '"speech_response": "Đã bật đèn rọi tối đa.", "requires_confirmation": false}'
+            "Danh sách hàm điều khiển:\n"
+            "1. set_lights(value=0..100): Bật/Tắt/Điều chỉnh đèn rọi.\n"
+            "2. arm_thrusters(): Khởi động động cơ chân vịt.\n"
+            "3. disarm_thrusters(): Ngắt động cơ chân vịt.\n"
+            "4. emergency_stop(): Ngắt khẩn cấp toàn bộ hệ thống.\n"
+            "5. read_sop(topic='pipeline'): Tra cứu quy trình thao tác chuẩn SOP (kiểm tra đường ống pipeline, thợ lặn diver, chân vịt).\n"
+            "6. get_telemetry(): Đọc thông số độ sâu, điện áp, heading.\n\n"
+            f"Bối cảnh hệ thống hiện tại: {system_context}\n"
+            "Định dạng JSON bắt buộc:\n"
+            '{"intent": "query_sop", "tool_call": {"action": "read_sop", "params": {"topic": "pipeline"}}, '
+            '"speech_response": "Quy trình kiểm tra đường ống dưới nước: Bước 1 giữ khoảng cách 1.5m...", "requires_confirmation": false}'
         )
 
         payload = {
@@ -173,6 +180,11 @@ class ROVAgentBrain:
         if slm_res is not None:
             try:
                 out = AgentOutputSchema(**slm_res)
+                if out.tool_call and out.tool_call.action == "read_sop":
+                    topic = str(out.tool_call.params.get("topic", text_clean))
+                    sop_text = self._search_sop(topic if topic != text_clean else text_clean)
+                    if sop_text:
+                        out.speech_response = sop_text
                 return self._evaluate_safety_and_build(out)
             except Exception as exc:
                 print(f"[AgentBrain] Pydantic parsing error: {exc}")
@@ -221,13 +233,11 @@ class ROVAgentBrain:
         text_lower = text.lower()
         depth = telemetry.get("depth", 0.0)
 
-        # 1. Lights Command
-        if "bật đèn" in text_lower or "đèn rọi" in text_lower:
-            action = "set_lights"
-            params = {"value": 100}
-            speech = f"Đã bật đèn rọi tối đa. Độ sâu hiện tại là {depth:.1f} mét."
-            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params=params), speech_response=speech)
-            return self._evaluate_safety_and_build(out)
+        # 1. SOP RAG Search (Ưu tiên kiểm tra câu hỏi quy trình SOP trước)
+        if "quy trình" in text_lower or "hướng dẫn" in text_lower or "sop" in text_lower:
+            sop_text = self._search_sop(text_lower)
+            out = AgentOutputSchema(intent="query_sop", tool_call=AgentToolCall(action="read_sop"), speech_response=sop_text)
+            return out, None
 
         # 2. Critical ARM / DISARM Command
         elif "khởi động động cơ" in text_lower or "arm động cơ" in text_lower:
@@ -240,11 +250,13 @@ class ROVAgentBrain:
             out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action), speech_response="")
             return self._evaluate_safety_and_build(out)
 
-        # 3. SOP RAG Search
-        elif "quy trình" in text_lower or "hướng dẫn" in text_lower or "sop" in text_lower:
-            sop_text = self._search_sop(text_lower)
-            out = AgentOutputSchema(intent="query_sop", tool_call=AgentToolCall(action="read_sop"), speech_response=sop_text)
-            return out, None
+        # 3. Lights Command
+        elif "bật đèn" in text_lower or "tắt đèn" in text_lower or "đèn rọi" in text_lower or "đèn" in text_lower:
+            action = "set_lights"
+            val = 0 if "tắt" in text_lower else 100
+            speech = f"Đã {'tắt' if val==0 else 'bật'} đèn rọi. Độ sâu hiện tại là {depth:.1f} mét."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"value": val}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
 
         # 4. Telemetry Inquiry
         elif "độ sâu" in text_lower or "điện áp" in text_lower or "thông số" in text_lower:
