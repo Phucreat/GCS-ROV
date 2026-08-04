@@ -1,0 +1,32 @@
+{
+  "sop_procedures": [
+    {
+      "id": "pipeline_inspection",
+      "title": "Quy trình kiểm tra đường ống dưới nước (Subsea Pipeline Inspection)",
+      "steps": [
+        "Bước 1: Giữ khoảng cách an toàn 1.5m với đường ống, bật đèn rọi công suất tối đa.",
+        "Bước 2: Di chuyển chậm 0.2 m/s dọc theo thân ống, kích hoạt chế độ AI Vision để phát hiện vết nứt hoặc mảng bám.",
+        "Bước 3: Khi phát hiện rò rỉ hoặc va chạm, kích hoạt nút Snapshot và ghi nhận tọa độ GPS/NED.",
+        "Bước 4: Báo cáo tình trạng ống về trạm GCS và chuẩn bị quy trình lặn nổi an toàn."
+      ]
+    },
+    {
+      "id": "diver_safety",
+      "title": "Quy trình an toàn khi có thợ lặn trong vùng hoạt động (Diver Safety Protocol)",
+      "steps": [
+        "Bước 1: Giữ khoảng cách tối thiểu 3.0m với thợ lặn, giảm tốc độ động cơ chân vịt xuống 25%.",
+        "Bước 2: Bật chế độ cảnh báo chớp sáng và phát thông báo giọng nói tới trạm mặt đất.",
+        "Bước 3: Nghiêm cấm tự ý ARM động cơ khi thợ lặn di chuyển trong bán kính 2.0m xung quanh ROV."
+      ]
+    },
+    {
+      "id": "thruster_check",
+      "title": "Quy trình kiểm tra hệ thống chân vịt và nguồn điện (Thruster & Power SOP)",
+      "steps": [
+        "Bước 1: Kiểm tra điện áp Pin/Tether phải trên 14.5V trước khi lặn sâu.",
+        "Bước 2: Thử từng kênh điều khiển Surge, Sway, Heave, Yaw ở công suất thấp 10%.",
+        "Bước 3: Xác nhận không có dị vật quấn vào chân vịt trước khi kích hoạt ARM."
+      ]
+    }
+  ]
+}

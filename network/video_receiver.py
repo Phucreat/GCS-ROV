@@ -276,6 +276,8 @@ class VideoReceiver(QThread):
                     break  # Break inner loop → outer loop reopens
 
                 t_start = time.monotonic()
+
+                # Đọc frame trực tiếp tuần tự để bảo toàn toàn bộ H.264 P-frames (chống xước/rác ảnh)
                 ret, frame = cap.read()
 
                 if not ret or frame is None:
@@ -336,13 +338,12 @@ class VideoReceiver(QThread):
                 resized = self._resize_frame(cv2, frame)
                 self.sig_frame.emit(resized)
 
-                # ---- Frame-rate throttling --------------------------
-                elapsed = time.monotonic() - t_start
-                sleep_s = frame_interval_s - elapsed
-                if sleep_s > 0:
-                    # Use cv2.waitKey for accurate multimedia timing;
-                    # fall back to time.sleep for headless environments.
-                    time.sleep(sleep_s)
+                # ---- Frame-rate throttling (CHỈ áp dụng cho Video File) ----
+                if source_type is VideoSource.FILE:
+                    elapsed = time.monotonic() - t_start
+                    sleep_s = frame_interval_s - elapsed
+                    if sleep_s > 0:
+                        time.sleep(sleep_s)
 
             # End of inner loop — release capture an toàn
             self._safe_release(cap)
@@ -390,56 +391,71 @@ class VideoReceiver(QThread):
         """
         try:
             if source_type is VideoSource.UDP_H264:
-                # ── UDP H.264 / MPEG-TS Stream (ROV → GCS) ─────────────
-                port = int(url_or_index) if str(url_or_index).isdigit() else 5620
+                # ── UDP Stream / HTTP MJPEG Stream (ROV → GCS) ────────
+                url_str = str(url_or_index)
                 cap = None
 
-                # 1. Thử GStreamer MPEG-TS pipeline (tương thích mpegtsmux của Pi 5)
-                gst_ts = (
-                    f"udpsrc port={port} buffer-size=524288 ! "
-                    f"tsdemux ! h264parse ! avdec_h264 ! "
-                    f"videoconvert ! video/x-raw,format=BGR ! "
-                    f"appsink drop=1 max-buffers=1 sync=false"
-                )
-                cap = cv2.VideoCapture(gst_ts, cv2.CAP_GSTREAMER)
+                if url_str.startswith("http://") or url_str.startswith("https://"):
+                    # HTTP MJPEG Stream (Giao thức siêu mượt, không lỗi socket)
+                    cap = cv2.VideoCapture(url_str)
+                else:
+                    port = int(url_or_index) if url_str.isdigit() else 5620
+                    # Danh sách pipeline thử nghiệm theo thứ tự ưu tiên
+                    pipelines = [
+                        # 1. GStreamer RTP MJPEG (Khớp rtpjpegpay từ Pi 5)
+                        (
+                            f"udpsrc port={port} caps=\"application/x-rtp,media=video,encoding-name=JPEG\" ! "
+                            f"rtpjpegdepay ! jpegdec ! videoconvert ! video/x-raw,format=BGR ! "
+                            f"appsink drop=1 max-buffers=1 sync=false",
+                            cv2.CAP_GSTREAMER
+                        ),
+                        # 2. GStreamer Raw MJPEG (với jpegparse)
+                        (
+                            f"udpsrc port={port} ! jpegparse ! "
+                            f"jpegdec ! videoconvert ! video/x-raw,format=BGR ! "
+                            f"appsink drop=1 max-buffers=1 sync=false",
+                            cv2.CAP_GSTREAMER
+                        ),
+                        # 3. GStreamer MPEG-TS H.264 (Tương thích mpegtsmux cũ)
+                        (
+                            f"udpsrc port={port} buffer-size=524288 ! "
+                            f"tsdemux ! h264parse ! avdec_h264 ! "
+                            f"videoconvert ! video/x-raw,format=BGR ! "
+                            f"appsink drop=1 max-buffers=1 sync=false",
+                            cv2.CAP_GSTREAMER
+                        ),
+                        # 4. FFmpeg UDP Fallback (Zero-Latency)
+                        (
+                            f"udp://0.0.0.0:{port}?overrun_nonfatal=1&fifo_size=1048576&fflags=nobuffer&flags=low_delay",
+                            cv2.CAP_FFMPEG
+                        )
+                    ]
 
-                if not cap or not cap.isOpened():
-                    # 2. Thử GStreamer Raw H.264 pipeline
-                    gst_raw = (
-                        f"udpsrc port={port} buffer-size=524288 ! "
-                        f"h264parse ! avdec_h264 ! "
-                        f"videoconvert ! video/x-raw,format=BGR ! "
-                        f"appsink drop=1 max-buffers=1 sync=false"
-                    )
-                    cap = cv2.VideoCapture(gst_raw, cv2.CAP_GSTREAMER)
+                    for pipe_str, api_pref in pipelines:
+                        try:
+                            temp_cap = cv2.VideoCapture(pipe_str, api_pref)
+                            if temp_cap is not None:
+                                end_t = time.monotonic() + 0.4
+                                while not temp_cap.isOpened() and time.monotonic() < end_t:
+                                    time.sleep(0.04)
 
-                if not cap or not cap.isOpened():
-                    # 3. Thử GStreamer RTP H.264 pipeline
-                    gst_rtp = (
-                        f"udpsrc port={port} caps=\"application/x-rtp,media=video,"
-                        f"clock-rate=90000,encoding-name=H264,payload=96\" ! "
-                        f"rtph264depay ! h264parse ! avdec_h264 ! "
-                        f"videoconvert ! video/x-raw,format=BGR ! "
-                        f"appsink drop=1 max-buffers=1 sync=false"
-                    )
-                    cap = cv2.VideoCapture(gst_rtp, cv2.CAP_GSTREAMER)
-
-                if not cap or not cap.isOpened():
-                    # 4. Fallback FFmpeg UDP siêu mượt (low-latency zero buffer)
-                    print(
-                        f"[VideoReceiver] GStreamer pipelines unsuccessful — "
-                        f"using FFmpeg fallback for udp://0.0.0.0:{port}"
-                    )
-                    ffmpeg_url = f"udp://0.0.0.0:{port}?overrun_nonfatal=1&fifo_size=5000000"
-                    cap = cv2.VideoCapture(ffmpeg_url, cv2.CAP_FFMPEG)
+                                if temp_cap.isOpened():
+                                    cap = temp_cap
+                                    break
+                                else:
+                                    self._safe_release(temp_cap)
+                        except Exception:
+                            pass
 
                 if cap:
                     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
             elif source_type is VideoSource.RTSP:
-                # Use FFMPEG backend for RTSP - most reliable cross-platform
-                cap = cv2.VideoCapture(str(url_or_index), cv2.CAP_FFMPEG)
-                # Keep internal buffer at 1 frame to minimise latency
+                # Use FFMPEG backend for RTSP with low-delay flags
+                rtsp_url = str(url_or_index)
+                if not rtsp_url.startswith("http://") and "?" not in rtsp_url:
+                    rtsp_url += "?fflags=nobuffer&flags=low_delay"
+                cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
             elif source_type is VideoSource.WEBCAM:
@@ -469,18 +485,21 @@ class VideoReceiver(QThread):
                 self.sig_error.emit(f"Unknown VideoSource type: {source_type!r}")
                 return None
 
+            if cap is None:
+                return None
+
             # Brief open-check with timeout
             deadline = time.monotonic() + _OPEN_TIMEOUT_S
-            while not cap.isOpened() and time.monotonic() < deadline:
+            while cap is not None and not cap.isOpened() and time.monotonic() < deadline:
                 # Kiểm tra source_changed trong lúc chờ
                 with self._lock:
                     if self._source_changed:
-                        cap.release()
+                        self._safe_release(cap)
                         return None
                 time.sleep(_CAP_OPEN_POLL_S)
 
-            if not cap.isOpened():
-                cap.release()
+            if cap is None or not cap.isOpened():
+                self._safe_release(cap)
                 self.sig_error.emit(
                     f"Timed out opening source: {url_or_index!r}"
                 )

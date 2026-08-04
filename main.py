@@ -88,6 +88,19 @@ try:
 except ImportError:
     HAS_AI = False
 
+# ── Feature 2.5: Offline 100% Voice Co-Pilot Agent ─────────────────
+try:
+    from AI.ipc_bus import IPCBus
+    from AI.cv_engine import SubseaCVEngine, fine_tune_yolov11
+    from AI.vad_worker import VADWorker
+    from AI.stt_worker import STTWorker
+    from AI.agent_brain import ROVAgentBrain
+    from AI.tts_worker import TTSWorker
+    HAS_VOICE_AGENT = True
+except ImportError as _err:
+    print(f"[Main] Voice Agent import warning: {_err}")
+    HAS_VOICE_AGENT = False
+
 # ── Feature 3: Mission Planner ────────────────────────────────────
 try:
     from GUI.widgets.mission_planner import MissionPlanner
@@ -156,6 +169,12 @@ class ROVMainWindow(QMainWindow):
 
         self.ui.pbtn_iconheader.setIcon(QIcon(logo_path))
         self.ui.pbtn_iconheader.setIconSize(QtCore.QSize(45, 45))
+        # Logo Phần mềm thanh Taskbar
+        logotaskbar_path = os.path.join(current_dir, "GUI", "img", "logodesktop.png")
+        self.setWindowIcon(QIcon(logotaskbar_path))
+
+        self.ui.pbtn_iconheader.setIcon(QIcon(logo_path))
+        self.ui.pbtn_iconheader.setIconSize(QtCore.QSize(45, 45))
         # --- Trạng thái ---
         self._current_model_name = "3DC"
         self._rov_model = None
@@ -213,6 +232,11 @@ class ROVMainWindow(QMainWindow):
         self._ar_hud:      object = None
         self._ai_proc:     object = None
         self._ai_panel:    object = None
+        self._ipc_bus:     object = None
+        self._agent_brain: object = None
+        self._vad_worker:  object = None
+        self._stt_worker:  object = None
+        self._tts_worker:  object = None
         self._mission_planner: object = None
         self._seafloor_mapper: object = None
         self._seafloor_mesh:   object = None
@@ -622,6 +646,123 @@ class ROVMainWindow(QMainWindow):
         )
         self._ai_proc.sig_model_loaded.connect(self._on_ai_model_loaded)
         self._ai_proc.start()
+
+        # Initialize Voice Co-Pilot Agent if available
+        if HAS_VOICE_AGENT:
+            self._setup_voice_agent_pipeline()
+
+    def _setup_voice_agent_pipeline(self):
+        """Khởi tạo Offline 100% Voice Co-Pilot Agent (VAD + STT + SLM + TTS)."""
+        if not HAS_VOICE_AGENT or self._agent_brain is not None:
+            return
+
+        print("[Main] Initializing Local-First Voice Co-Pilot Agent...")
+        try:
+            self._ipc_bus = IPCBus()
+            self._agent_brain = ROVAgentBrain(sop_json_path="AI/sop_rules.json")
+            self._stt_worker = STTWorker(language="vi")
+            self._tts_worker = TTSWorker()
+            self._vad_worker = VADWorker()
+
+            # Connect VAD speech end -> STT -> Agent Brain
+            def _on_speech_captured(pcm_audio):
+                if self._stt_worker:
+                    text = self._stt_worker.transcribe_audio(pcm_audio)
+                    if text:
+                        self._process_pilot_voice_command(text)
+
+            self._vad_worker.sig_speech_end.connect(_on_speech_captured)
+
+            # Connect VAD mic status to AI Panel
+            if self._ai_panel:
+                def _on_vad_status(is_speaking, energy):
+                    if is_speaking:
+                        self._ai_panel.lbl_mic_status.setText(f"Mic VAD: 🟢 Speech Detected ({energy:.2f})")
+                        self._ai_panel.lbl_mic_status.setStyleSheet("color: #00FF9D; font-weight: bold;")
+                    else:
+                        self._ai_panel.lbl_mic_status.setText("Mic VAD: 🔴 Listening / Quiet")
+                        self._ai_panel.lbl_mic_status.setStyleSheet("color: #94A9C4;")
+
+                self._vad_worker.sig_vad_status.connect(_on_vad_status)
+
+                # Connect UI Safety confirmation buttons
+                self._ai_panel.btn_confirm_action.clicked.connect(lambda: self._process_pilot_voice_command("Xác nhận"))
+                self._ai_panel.btn_cancel_action.clicked.connect(lambda: self._process_pilot_voice_command("Hủy"))
+
+            # Connect CV Critical Alerts -> Emergency Voice Announcement
+            if self._ai_proc and hasattr(self._ai_proc, 'sig_error'):
+                def _on_cv_alert(err_text):
+                    if "CV CRITICAL ALERT" in err_text:
+                        alert_desc = err_text.replace("⚠️ CV CRITICAL ALERT:", "").strip()
+                        if self._agent_brain and self._tts_worker:
+                            out = self._agent_brain.process_emergency_event("critical_alert", alert_desc)
+                            self._tts_worker.speak(out.speech_response, is_emergency=True)
+
+                self._ai_proc.sig_error.connect(_on_cv_alert)
+
+            # Start workers
+            self._tts_worker.start()
+            self._vad_worker.start()
+
+            if hasattr(self, 'power_widget') and self.power_widget:
+                self.power_widget.add_log("🎙 Trợ lý Giọng nói Offline (VAD+STT+SLM+TTS) đã sẵn sàng", "SUCCESS")
+
+        except Exception as exc:
+            print(f"[Main] Error starting Voice Agent: {exc}")
+
+    def _process_pilot_voice_command(self, text: str):
+        """Process transcribed voice command from pilot."""
+        if not self._agent_brain:
+            return
+
+        telemetry = {
+            "depth": self._depth,
+            "voltage": self._voltage,
+            "heading": self._heading,
+            "mode": self._flight_mode,
+        }
+
+        output, immediate_action = self._agent_brain.process_pilot_input(text, telemetry)
+
+        # 1. Update UI & Speech Output
+        if output and output.speech_response:
+            if self._tts_worker:
+                self._tts_worker.speak(output.speech_response)
+            if self._ai_panel:
+                self._ai_panel.lbl_agent_speech.setText(f"Agent: {output.speech_response}")
+            if hasattr(self, 'power_widget') and self.power_widget:
+                self.power_widget.add_log(f"🎙 Agent: {output.speech_response}", "INFO")
+
+        # 2. Update Safety Confirmation Box on UI
+        if self._ai_panel:
+            pending = self._agent_brain.safety_guard.get_pending_action()
+            if pending:
+                self._ai_panel.lbl_safety_prompt.setText(f"CẦN XÁC NHẬN: {pending.get('description')}")
+                self._ai_panel.grp_safety.setVisible(True)
+            else:
+                self._ai_panel.grp_safety.setVisible(False)
+
+        # 3. Execute Immediate Action if approved
+        if immediate_action:
+            self._dispatch_agent_action(immediate_action.get("action"), immediate_action.get("params", {}))
+
+    def _dispatch_agent_action(self, action_name: str, params: dict):
+        """Execute dispatched MAVLink / UI actions from Agent."""
+        print(f"[Main] Dispatching Agent Action: {action_name} ({params})")
+        if hasattr(self, 'power_widget') and self.power_widget:
+            self.power_widget.add_log(f"⚙️ Thực thi lệnh Agent: {action_name}", "SUCCESS")
+
+        if action_name == "set_lights":
+            val = params.get("value", 100)
+            self._set_lights(val)
+        elif action_name in ("arm_thrusters", "arm"):
+            self._arm_disarm(True)
+        elif action_name in ("disarm_thrusters", "disarm"):
+            self._arm_disarm(False)
+        elif action_name in ("emergency_stop", "estop"):
+            self._emergency_stop()
+        elif action_name == "take_snapshot":
+            self._take_snapshot()
 
     def _on_ai_model_loaded(self, ok: bool, msg: str):
         print(f"[AI] Model status: {msg}")

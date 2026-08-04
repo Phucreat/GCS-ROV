@@ -311,10 +311,51 @@ class AIControlPanel(QWidget):
 
         root.addWidget(self._build_detection_group())
         root.addWidget(self._build_tracking_group())
+        root.addWidget(self._build_voice_agent_group())
         root.addWidget(self._build_stats_group())
         root.addSpacerItem(
             QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
         )
+
+    # ── Voice Co-Pilot Agent group ────────────────────────────────────────── #
+    def _build_voice_agent_group(self) -> QGroupBox:
+        grp = QGroupBox("🎙  VOICE CO-PILOT AGENT (OFFLINE 100%)")
+        lay = QVBoxLayout(grp)
+        lay.setSpacing(8)
+
+        self.chk_voice_agent = QCheckBox("Enable Voice Agent (VAD + SLM + TTS)")
+        self.chk_voice_agent.setChecked(True)
+        lay.addWidget(self.chk_voice_agent)
+
+        self.lbl_mic_status = _make_label("Mic VAD: 🔴 Mute / Ready", "lbl_stat_track")
+        lay.addWidget(self.lbl_mic_status)
+
+        self.lbl_agent_speech = _make_label("Agent: Ready for commands", "lbl_stat_fps")
+        self.lbl_agent_speech.setWordWrap(True)
+        lay.addWidget(self.lbl_agent_speech)
+
+        # Safety confirmation alert container
+        self.grp_safety = QGroupBox("⚠️ HUMAN-IN-THE-LOOP SAFETY")
+        self.grp_safety.setStyleSheet("QGroupBox { border: 1px solid #FFC107; background: rgba(255, 193, 7, 0.1); color: #FFC107; font-weight: bold; }")
+        lay_safe = QVBoxLayout(self.grp_safety)
+        
+        self.lbl_safety_prompt = _make_label("No pending critical action.", "lbl_conf_val")
+        self.lbl_safety_prompt.setWordWrap(True)
+        lay_safe.addWidget(self.lbl_safety_prompt)
+
+        btn_row = QHBoxLayout()
+        self.btn_confirm_action = QPushButton("✓  XÁC NHẬN")
+        self.btn_confirm_action.setStyleSheet("background: #00C853; color: white; font-weight: bold;")
+        self.btn_cancel_action = QPushButton("✗  HỦY")
+        self.btn_cancel_action.setStyleSheet("background: #D50000; color: white; font-weight: bold;")
+        
+        btn_row.addWidget(self.btn_confirm_action)
+        btn_row.addWidget(self.btn_cancel_action)
+        lay_safe.addLayout(btn_row)
+        self.grp_safety.setVisible(False)  # Hidden until pending critical command
+
+        lay.addWidget(self.grp_safety)
+        return grp
 
     # ── Detection group ───────────────────────────────────────────────── #
     def _build_detection_group(self) -> QGroupBox:
