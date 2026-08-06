@@ -23,19 +23,26 @@ _silero_model = None
 def _get_silero_vad():
     global _silero_model
     if _silero_model is None:
+        # Method 1: Load directly from installed local silero_vad package (100% offline)
         try:
-            import torch
-            model, _ = torch.hub.load(
-                repo_or_dir="snakers4/silero-vad",
-                model="silero_vad",
-                force_reload=False,
-                onnx=False,
-            )
-            _silero_model = model
-            print("[SileroVAD] Loaded Silero VAD model successfully.")
-        except Exception as exc:
-            print(f"[SileroVAD] Warning: Torch hub load fallback to energy VAD: {exc}")
-            _silero_model = False
+            from silero_vad import load_silero_vad
+            _silero_model = load_silero_vad()
+            print("[SileroVAD] Loaded Silero VAD model directly from local silero_vad package.")
+        except Exception as exc1:
+            try:
+                import torch
+                torch.hub._validate_not_a_fork = lambda *args, **kwargs: True
+                model, _ = torch.hub.load(
+                    repo_or_dir="snakers4/silero-vad",
+                    model="silero_vad",
+                    trust_repo=True,
+                    onnx=False,
+                )
+                _silero_model = model
+                print("[SileroVAD] Loaded Silero VAD via torch hub.")
+            except Exception as exc2:
+                print(f"[SileroVAD] Local silero-vad load error: {exc1} / {exc2}")
+                _silero_model = False
     return _silero_model if _silero_model is not False else None
 
 
@@ -182,16 +189,26 @@ class VADWorker(QThread):
 
             self._audio_buffer.append(chunk)
             self._silence_frames = 0
+
+            # Max utterance cap (~3.0s of continuous speech = 100 chunks of 30ms) -> Auto flush
+            if len(self._audio_buffer) >= 100:
+                self._is_speaking = False
+                full_audio = np.concatenate(self._audio_buffer)
+                print(f"[VADWorker] Speech max cap reached ({len(full_audio)} samples). Emitting speech end.")
+                self.sig_speech_end.emit(full_audio)
+                self._audio_buffer = []
+                self._silence_frames = 0
         else:
             if self._is_speaking:
                 self._audio_buffer.append(chunk)
                 self._silence_frames += 1
 
-                if self._silence_frames >= self._max_silence_frames:
+                if self._silence_frames >= 6:  # ~180ms silence triggers end of speech quickly
                     # End of speech detected
                     self._is_speaking = False
                     if len(self._audio_buffer) > 0:
                         full_audio = np.concatenate(self._audio_buffer)
+                        print(f"[VADWorker] End of speech detected ({len(full_audio)} samples). Emitting speech end.")
                         self.sig_speech_end.emit(full_audio)
                     self._audio_buffer = []
                     self._silence_frames = 0

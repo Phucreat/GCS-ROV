@@ -23,23 +23,17 @@ except ImportError:
 _whisper_model = None
 
 
-def _get_whisper_model(model_size: str = "base", device: str = "cuda"):
+def _get_whisper_model(model_size: str = "base", device: str = "cpu"):
     global _whisper_model
     if _whisper_model is None:
         try:
             from faster_whisper import WhisperModel
-            # Check CUDA availability
-            compute_type = "float16" if device == "cuda" else "int8"
-            _whisper_model = WhisperModel(model_size, device=device, compute_type=compute_type)
-            print(f"[FasterWhisper] Loaded '{model_size}' model on {device} ({compute_type}).")
+            print(f"[FasterWhisper] Đang nạp model '{model_size}' chạy trên CPU (int8)...")
+            _whisper_model = WhisperModel(model_size, device="cpu", compute_type="int8")
+            print("[FasterWhisper] Nạp model thành công!")
         except Exception as exc:
-            print(f"[FasterWhisper] CTranslate2 load error ({exc}). Attempting CPU fallback...")
-            try:
-                from faster_whisper import WhisperModel
-                _whisper_model = WhisperModel(model_size, device="cpu", compute_type="int8")
-            except Exception as exc2:
-                print(f"[FasterWhisper] Fallback failed: {exc2}")
-                _whisper_model = False
+            print(f"[FasterWhisper] Lỗi nạp model: {exc}")
+            _whisper_model = False
     return _whisper_model if _whisper_model is not False else None
 
 
@@ -89,8 +83,20 @@ class STTWorker(QObject):
                 vad_filter=True,
             )
 
+            # Lọc ảo giác Whisper (Discards background noise hallucinations when no_speech_prob > 0.4)
+            no_speech_prob = getattr(info, "no_speech_prob", 0.0)
+            if no_speech_prob > 0.4:
+                print(f"[STT] Ignored background noise hallucination (no_speech_prob={no_speech_prob:.2f})")
+                return ""
+
             text_result = " ".join([segment.text for segment in segments]).strip()
             confidence = info.transcription_probability if hasattr(info, 'transcription_probability') else 0.9
+
+            # Filter common Whisper hallucination phrases on silence
+            hallucinations = ["cảm ơn các bạn", "đăng ký kênh", "subtitles by", "thank you", "cảm ơn đã theo dõi", "hẹn gặp lại"]
+            if any(h in text_result.lower() for h in hallucinations) and len(text_result) < 25:
+                print(f"[STT] Filtered common silent hallucination: '{text_result}'")
+                return ""
 
             if text_result:
                 print(f"[STT] Transcribed ({self._language}): '{text_result}' (prob={confidence:.2f})")

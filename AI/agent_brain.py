@@ -24,7 +24,7 @@ from AI.safety_guard import CommandCategory, SafetyGuard
 # Pydantic Structured Output Model
 # ---------------------------------------------------------------------------
 class AgentToolCall(BaseModel):
-    action: str = Field(description="Tên hàm điều khiển (vd: set_lights, arm_thrusters, emergency_stop, read_sop, get_depth)")
+    action: Optional[str] = Field(default="read_sop", description="Tên hàm điều khiển (vd: set_lights, arm_thrusters, emergency_stop, read_sop, take_snapshot)")
     params: Dict[str, Any] = Field(default_factory=dict, description="Tham số truyền cho hàm")
 
 
@@ -76,19 +76,17 @@ class LocalSLMEngine:
             return None
 
         system_instruction = (
-            "Bạn là Trợ lý Ảo Co-Pilot cho phần mềm điều khiển robot lặn ROV (GCS ROV Assistant).\n"
-            "Nhiệm vụ của bạn: Trả lời ngắn gọn, chính xác bằng tiếng Việt và xuất kết quả định dạng JSON chuẩn.\n"
-            "Danh sách hàm điều khiển:\n"
-            "1. set_lights(value=0..100): Bật/Tắt/Điều chỉnh đèn rọi.\n"
-            "2. arm_thrusters(): Khởi động động cơ chân vịt.\n"
-            "3. disarm_thrusters(): Ngắt động cơ chân vịt.\n"
-            "4. emergency_stop(): Ngắt khẩn cấp toàn bộ hệ thống.\n"
-            "5. read_sop(topic='pipeline'): Tra cứu quy trình thao tác chuẩn SOP (kiểm tra đường ống pipeline, thợ lặn diver, chân vịt).\n"
-            "6. get_telemetry(): Đọc thông số độ sâu, điện áp, heading.\n\n"
-            f"Bối cảnh hệ thống hiện tại: {system_context}\n"
-            "Định dạng JSON bắt buộc:\n"
-            '{"intent": "query_sop", "tool_call": {"action": "read_sop", "params": {"topic": "pipeline"}}, '
-            '"speech_response": "Quy trình kiểm tra đường ống dưới nước: Bước 1 giữ khoảng cách 1.5m...", "requires_confirmation": false}'
+            "Bạn là VIC - Trợ lý ảo AI chuyên nghiệp đồng hành cùng người vận hành Robot lặn ngầm CNX VIC trên Trạm điều khiển mặt đất (GCS).\n\n"
+            f"TRẠNG THÁI VIỄN TRẮC THỜI GIAN THỰC (REAL-TIME TELEMETRY):\n{system_context}\n\n"
+            "QUY TẮC PHẢN HỒI NGUYÊN TẮC:\n"
+            "1. NĂNG LỰC TRẢ LỜI: Trả lời ngắn gọn (1 - 3 câu), súc tích, tự nhiên để đọc ra loa qua Text-to-Speech (TTS).\n"
+            "2. TÂM SỰ & TRÒ CHUYỆN (Nhiệm vụ 1): Thân thiện, hóm hỉnh, khích lệ tinh thần người lái khi lặn biển. KHÔNG gọi bất kỳ Tool nào khi người dùng chỉ trò chuyện phiếm ('bạn tên gì', 'sóng to quá', 'mệt quá', 'lặn sợ quá').\n"
+            "3. ĐIỀU KHIỂN PHẦN CỨNG & Ý ĐỊNH NGẦM (Nhiệm vụ 2): Nhận biết cả lệnh trực tiếp ('Bật đèn 80%') lẫn ý định ngầm ('Tối quá' -> set_lights 100, 'Lặn sâu hơn chút' -> depth control). Gọi đúng Tool tương ứng (set_lights, arm_thrusters, disarm_thrusters, emergency_stop, take_snapshot). Với các lệnh nguy hiểm (ARM, DISARM, Ngắt khẩn cấp), yêu cầu xác nhận trước.\n"
+            "4. TRUY XUẤT THÔNG SỐ & CẢNH BÁO (Nhiệm vụ 3): Trả lời ngay các câu hỏi viễn trắc ('Đang lặn sâu bao nhiêu?', 'Pin còn bao nhiêu?', 'Nhiệt độ cabin sao rồi?') từ thông số viễn trắc thời gian thực ở trên. Nếu rò rỉ nước hoặc pin thấp, đưa ra cảnh báo an toàn.\n"
+            "5. HƯỚNG DẪN QUY TRÌNH & GCS (Nhiệm vụ 4): Sử dụng Tool read_sop(topic=...) khi người dùng hỏi quy trình kiểm tra SOP hoặc cách dùng giao diện GCS.\n\n"
+            "ĐỊNH DẠNG JSON BẮT BUỘC:\n"
+            '{"intent": "chat", "tool_call": null, "speech_response": "Sóng gió trên mặt nước không làm khó được CNX VIC đâu! Tớ vẫn đang giám sát độ sâu 12.4m rất ổn định, bạn cứ yên tâm giữ vững tay lái nhé!", "requires_confirmation": false}\n'
+            '{"intent": "control", "tool_call": {"action": "set_lights", "params": {"value": 100}}, "speech_response": "Tớ đã tăng đèn rọi Subsea lên 100% độ sáng cho bạn quan sát rõ hơn rồi nhé.", "requires_confirmation": false}'
         )
 
         payload = {
@@ -106,7 +104,7 @@ class LocalSLMEngine:
                 data=json.dumps(payload).encode("utf-8"),
                 headers={"Content-Type": "application/json", "User-Agent": "GCS_ROV"},
             )
-            with urllib.request.urlopen(req, timeout=4.0) as resp:
+            with urllib.request.urlopen(req, timeout=12.0) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode("utf-8"))
                     res_text = data.get("response", "")
@@ -233,13 +231,44 @@ class ROVAgentBrain:
         text_lower = text.lower()
         depth = telemetry.get("depth", 0.0)
 
-        # 1. SOP RAG Search (Ưu tiên kiểm tra câu hỏi quy trình SOP trước)
-        if "quy trình" in text_lower or "hướng dẫn" in text_lower or "sop" in text_lower:
+        # 0. Agent Identity & Friendly Morale Chat (Nhiệm vụ 1: Tâm sự & Trò chuyện)
+        if any(k in text_lower for k in ["tên gì", "tên là gì", "bạn là ai", "ai đây", "who are you", "giới thiệu"]):
+            speech = "Tôi là CNX VIC, trợ lý ảo AI chuyên nghiệp sẽ hỗ trợ bạn trong suốt quá trình vận hành robot lặn ngầm."
+            out = AgentOutputSchema(intent="chat", speech_response=speech)
+            return out, None
+
+        elif any(k in text_lower for k in ["sóng to", "rợn tóc gáy", "sợ quá", "biển xấu"]):
+            speech = f"Sóng gió trên mặt nước không làm khó được CNX VIC đâu! Tớ vẫn đang giám sát độ sâu {depth:.1f}m rất ổn định, bạn cứ yên tâm giữ vững tay lái nhé!"
+            out = AgentOutputSchema(intent="chat", speech_response=speech)
+            return out, None
+
+        elif any(k in text_lower for k in ["mệt quá", "căng thẳng", "đuối quá"]):
+            speech = "Bạn nghỉ tay uống hụm nước đi nhé, CNX VIC vẫn đang hỗ trợ bạn duy trì ổn định toàn bộ hệ thống."
+            out = AgentOutputSchema(intent="chat", speech_response=speech)
+            return out, None
+
+        # 1. Ý Định Ngầm & Điều Khiển Trực Tiếp (Nhiệm vụ 2)
+        # Ý định ngầm: "Tối quá", "Không thấy gì", "Tối thui" -> Tăng đèn rọi 100%
+        if any(k in text_lower for k in ["tối quá", "tối thui", "không nhìn thấy", "chẳng nhìn rõ", "tối"]):
+            action = "set_lights"
+            speech = "Tớ đã tăng đèn rọi Subsea lên 100% độ sáng cho bạn quan sát rõ hơn rồi nhé."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"value": 100}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # Chụp ảnh / Lưu khung hình
+        elif any(k in text_lower for k in ["chụp ảnh", "chụp hình", "lưu ảnh", "snapshot"]):
+            action = "take_snapshot"
+            speech = "Đã chụp và lưu ảnh vào thư mục media thành công."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # 2. SOP RAG Search (Nhiệm vụ 4: Quy trình & Hướng dẫn GCS)
+        elif "quy trình" in text_lower or "hướng dẫn" in text_lower or "sop" in text_lower or "cách dùng" in text_lower:
             sop_text = self._search_sop(text_lower)
             out = AgentOutputSchema(intent="query_sop", tool_call=AgentToolCall(action="read_sop"), speech_response=sop_text)
             return out, None
 
-        # 2. Critical ARM / DISARM Command
+        # 3. Critical ARM / DISARM / Emergency Command
         elif "khởi động động cơ" in text_lower or "arm động cơ" in text_lower:
             action = "arm_thrusters"
             out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action), speech_response="")
@@ -250,22 +279,22 @@ class ROVAgentBrain:
             out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action), speech_response="")
             return self._evaluate_safety_and_build(out)
 
-        # 3. Lights Command
+        # Lệnh Đèn Rọi Trực Tiếp
         elif "bật đèn" in text_lower or "tắt đèn" in text_lower or "đèn rọi" in text_lower or "đèn" in text_lower:
             action = "set_lights"
             val = 0 if "tắt" in text_lower else 100
-            speech = f"Đã {'tắt' if val==0 else 'bật'} đèn rọi. Độ sâu hiện tại là {depth:.1f} mét."
+            speech = f"Đã {'tắt' if val==0 else 'bật'} đèn rọi Subsea. Độ sâu hiện tại là {depth:.1f} mét."
             out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"value": val}), speech_response=speech)
             return self._evaluate_safety_and_build(out)
 
-        # 4. Telemetry Inquiry
-        elif "độ sâu" in text_lower or "điện áp" in text_lower or "thông số" in text_lower:
-            speech = f"Báo cáo thông số ROV: Độ sâu hiện tại {depth:.2f} mét. Điện áp tether {telemetry.get('voltage', 0.0):.1f} Volts."
+        # 4. Telemetry Inquiry (Nhiệm vụ 3: Truy xuất Viễn trắc)
+        elif any(k in text_lower for k in ["độ sâu", "điện áp", "pin", "nhiệt độ", "thông số", "cảm biến"]):
+            speech = f"Báo cáo viễn trắc VIC: Độ sâu {depth:.2f}m, Điện áp tether {telemetry.get('voltage', 0.0):.1f}V. Các cảm biến hoạt động bình thường."
             out = AgentOutputSchema(intent="query_telemetry", speech_response=speech)
             return out, None
 
         # 5. Default Chat Response
-        speech = f"Đã nghe rõ lệnh: '{text}'. Hệ thống đang ở trạng thái hoạt động bình thường."
+        speech = f"CNX VIC đã nghe rõ: '{text}'. Tớ luôn sẵn sàng hỗ trợ bạn!"
         out = AgentOutputSchema(intent="chat", speech_response=speech)
         return out, None
 

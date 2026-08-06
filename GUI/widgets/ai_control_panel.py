@@ -282,6 +282,8 @@ class AIControlPanel(QWidget):
     sig_track_class_changed = pyqtSignal(str)
     sig_track_gain_changed  = pyqtSignal(float)
     sig_voice_command_submitted = pyqtSignal(str)
+    sig_ptt_pressed  = pyqtSignal()
+    sig_ptt_released = pyqtSignal()
 
     # Pre-defined model entries:  (display label,  model file)
     _MODEL_PRESETS = [
@@ -329,6 +331,18 @@ class AIControlPanel(QWidget):
         self.chk_voice_agent = QCheckBox("Enable Voice Agent (VAD + SLM + TTS)")
         self.chk_voice_agent.setChecked(True)
         lay.addWidget(self.chk_voice_agent)
+
+        # Push-To-Talk (PTT) Button (Chống đơ & lọc lệnh rác)
+        self.btn_ptt = QPushButton("🎙  NẮM GIỮ ĐỂ NÓI (PUSH-TO-TALK)")
+        self.btn_ptt.setStyleSheet(
+            "QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #005580,stop:1 #002B40); "
+            "color: #00E5FF; border: 1px solid #00E5FF; border-radius: 6px; padding: 6px; font-weight: bold; font-size: 11px; }"
+            "QPushButton:pressed { background: #00E5FF; color: #000; border-color: #80FFFF; }"
+        )
+        lay.addWidget(self.btn_ptt)
+
+        self.btn_ptt.pressed.connect(self.sig_ptt_pressed.emit)
+        self.btn_ptt.released.connect(self.sig_ptt_released.emit)
 
         self.lbl_mic_status = _make_label("Mic VAD: 🔴 Mute / Ready", "lbl_stat_track")
         lay.addWidget(self.lbl_mic_status)

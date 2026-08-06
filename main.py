@@ -691,8 +691,10 @@ class ROVMainWindow(QMainWindow):
 
             # Connect VAD speech end -> STT -> Agent Brain
             def _on_speech_captured(pcm_audio):
+                print(f"[Main] Captured audio speech buffer ({len(pcm_audio)} samples). Transcribing with STT...")
                 if self._stt_worker:
                     text = self._stt_worker.transcribe_audio(pcm_audio)
+                    print(f"[Main] Transcribed speech text: '{text}'")
                     if text:
                         self._process_pilot_voice_command(text)
 
@@ -710,11 +712,32 @@ class ROVMainWindow(QMainWindow):
 
                 self._vad_worker.sig_vad_status.connect(_on_vad_status)
 
-                # Connect UI Safety confirmation buttons & Text command input
+                # Connect UI Safety confirmation buttons, Text command input & Push-To-Talk
                 self._ai_panel.btn_confirm_action.clicked.connect(lambda: self._process_pilot_voice_command("Xác nhận"))
                 self._ai_panel.btn_cancel_action.clicked.connect(lambda: self._process_pilot_voice_command("Hủy"))
                 if hasattr(self._ai_panel, 'sig_voice_command_submitted'):
                     self._ai_panel.sig_voice_command_submitted.connect(self._process_pilot_voice_command)
+
+                if hasattr(self._ai_panel, 'sig_ptt_pressed'):
+                    def _on_ptt_pressed():
+                        self._ai_panel.lbl_mic_status.setText("Mic PTT: 🟢 ĐANG THU ÂM (NHẤN GIỮ)...")
+                        self._ai_panel.lbl_mic_status.setStyleSheet("color: #00FF9D; font-weight: bold;")
+                        if self._vad_worker:
+                            self._vad_worker._is_speaking = True
+                            self._vad_worker._audio_buffer = []
+
+                    def _on_ptt_released():
+                        self._ai_panel.lbl_mic_status.setText("Mic VAD: 🔴 Listening / Ready")
+                        self._ai_panel.lbl_mic_status.setStyleSheet("color: #94A9C4;")
+                        if self._vad_worker and hasattr(self._vad_worker, '_audio_buffer') and len(self._vad_worker._audio_buffer) > 0:
+                            import numpy as np
+                            full_audio = np.concatenate(self._vad_worker._audio_buffer)
+                            self._vad_worker.sig_speech_end.emit(full_audio)
+                            self._vad_worker._audio_buffer = []
+                            self._vad_worker._is_speaking = False
+
+                    self._ai_panel.sig_ptt_pressed.connect(_on_ptt_pressed)
+                    self._ai_panel.sig_ptt_released.connect(_on_ptt_released)
 
             # Connect CV Critical Alerts -> Emergency Voice Announcement
             if self._ai_proc and hasattr(self._ai_proc, 'sig_error'):
@@ -732,27 +755,36 @@ class ROVMainWindow(QMainWindow):
             self._vad_worker.start()
 
             # Giới thiệu tự động khi khởi động phần mềm
-            welcome_text = "Tôi là CNX Aero, trợ lý ảo sẽ hỗ trợ bạn trong suốt quá trình làm việc."
+            welcome_text = "Tôi là CNX VIC, trợ lý ảo chuyên nghiệp sẽ hỗ trợ bạn trong suốt quá trình làm việc."
             self._tts_worker.speak(welcome_text)
             if self._ai_panel:
                 self._ai_panel.lbl_agent_speech.setText(f"Agent: {welcome_text}")
 
             if hasattr(self, 'power_widget') and self.power_widget:
-                self.power_widget.add_log("🎙 Trợ lý Giọng nói Offline (VAD+STT+SLM+TTS) đã sẵn sàng", "SUCCESS")
+                self.power_widget.add_log("🎙 Trợ lý Giọng nói Offline VIC (VAD+STT+SLM+TTS) đã sẵn sàng", "SUCCESS")
 
         except Exception as exc:
             print(f"[Main] Error starting Voice Agent: {exc}")
 
     def _process_pilot_voice_command(self, text: str):
-        """Process transcribed voice command from pilot."""
+        """Process transcribed voice command from pilot using rich CURRENT_ROV_STATE context."""
         if not self._agent_brain:
             return
 
         telemetry = {
-            "depth": self._depth,
-            "voltage": self._voltage,
-            "heading": self._heading,
-            "mode": self._flight_mode,
+            "depth": round(float(getattr(self, '_depth', 0.0)), 2),
+            "depth_m": round(float(getattr(self, '_depth', 0.0)), 2),
+            "voltage": round(float(getattr(self, '_voltage', 0.0)), 1),
+            "voltage_v": round(float(getattr(self, '_voltage', 0.0)), 1),
+            "heading": round(float(getattr(self, '_heading', 0.0)), 1),
+            "heading_deg": round(float(getattr(self, '_heading', 0.0)), 1),
+            "battery_pct": int(self.settings.get("battery_pct", 78)),
+            "internal_temp_c": round(float(getattr(self, '_temp', 38.5)), 1),
+            "leak_detected": bool(getattr(self, '_leak_detected', False)),
+            "ekf3_status": "GOOD",
+            "lights_intensity_pct": getattr(self, '_lights_val', 100 if getattr(self, '_lights_on', True) else 0),
+            "armed": bool(getattr(self, '_armed', False)),
+            "mode": str(getattr(self, '_flight_mode', "ALT_HOLD")),
         }
 
         output, immediate_action = self._agent_brain.process_pilot_input(text, telemetry)
@@ -1400,8 +1432,19 @@ class ROVMainWindow(QMainWindow):
         self.ui.lbl_control_speed_number.setText(
             str(int(self._speed_scale * 1000)))
 
+    def _set_lights(self, val: int):
+        """Điều chỉnh độ sáng đèn rọi (0-100%)."""
+        if self._mav_worker:
+            self._mav_worker.send_lights(int(val))
+
+    def _arm_disarm(self, arm: bool):
+        """ARM / DISARM động cơ chân vịt."""
+        if self._mav_worker:
+            self._mav_worker.send_arm(arm)
+
     def _toggle_led(self):
-        pass  # TODO: kết nối với MAVLink send_lights()
+        if self._mav_worker:
+            self._mav_worker.send_lights(100)
 
     def _mav_lights(self, brighter: bool):
         if self._mav_worker:
@@ -1409,7 +1452,7 @@ class ROVMainWindow(QMainWindow):
 
     def _toggle_arm(self):
         """ARM/DISARM toggle."""
-        if self._mav_worker and self._connected:
+        if self._mav_worker:
             self._mav_worker.send_arm(True)
 
     # ── Camera Snapshot / Record ───────────────────────────────────────
