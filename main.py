@@ -141,10 +141,34 @@ ROV_MODELS = {
 
 
 # ==============================================================
-# IMPORT SETTINGS DIALOG
-# ==============================================================
-# MAIN WINDOW
-# ==============================================================
+class AgentAsyncWorker(QtCore.QThread):
+    """Worker QThread running Whisper STT & Agent Brain LLM off the Qt GUI main thread."""
+    sig_result_ready = QtCore.pyqtSignal(object, object)  # (output, immediate_action)
+
+    def __init__(self, agent_brain, text: str, pcm_audio, stt_worker, telemetry: dict, parent=None):
+        super().__init__(parent)
+        self._brain = agent_brain
+        self._text = text
+        self._pcm_audio = pcm_audio
+        self._stt_worker = stt_worker
+        self._telemetry = telemetry
+
+    def run(self):
+        try:
+            cmd_text = self._text
+            if not cmd_text and self._pcm_audio is not None and self._stt_worker:
+                print(f"[AgentAsyncWorker] Transcribing audio buffer ({len(self._pcm_audio)} samples)...")
+                cmd_text = self._stt_worker.transcribe_audio(self._pcm_audio)
+                print(f"[AgentAsyncWorker] Transcribed text: '{cmd_text}'")
+
+            if cmd_text and self._brain:
+                output, immediate_action = self._brain.process_pilot_input(cmd_text, self._telemetry)
+                self.sig_result_ready.emit(output, immediate_action)
+            else:
+                self.sig_result_ready.emit(None, None)
+        except Exception as exc:
+            print(f"[AgentAsyncWorker] Error during async processing: {exc}")
+            self.sig_result_ready.emit(None, None)
 
 
 class ROVMainWindow(QMainWindow):
@@ -689,14 +713,10 @@ class ROVMainWindow(QMainWindow):
             self._tts_worker = TTSWorker()
             self._vad_worker = VADWorker()
 
-            # Connect VAD speech end -> STT -> Agent Brain
+            # Connect VAD speech end -> Async STT & Agent Brain Worker (Off Main Thread)
             def _on_speech_captured(pcm_audio):
-                print(f"[Main] Captured audio speech buffer ({len(pcm_audio)} samples). Transcribing with STT...")
-                if self._stt_worker:
-                    text = self._stt_worker.transcribe_audio(pcm_audio)
-                    print(f"[Main] Transcribed speech text: '{text}'")
-                    if text:
-                        self._process_pilot_voice_command(text)
+                print(f"[Main] Captured audio speech buffer ({len(pcm_audio)} samples). Dispatching to async worker...")
+                self._process_pilot_voice_command(text="", pcm_audio=pcm_audio)
 
             self._vad_worker.sig_speech_end.connect(_on_speech_captured)
 
@@ -707,7 +727,7 @@ class ROVMainWindow(QMainWindow):
                         self._ai_panel.lbl_mic_status.setText(f"Mic VAD: 🟢 Speech Detected ({energy:.2f})")
                         self._ai_panel.lbl_mic_status.setStyleSheet("color: #00FF9D; font-weight: bold;")
                     else:
-                        self._ai_panel.lbl_mic_status.setText("Mic VAD: 🔴 Listening / Quiet")
+                        self._ai_panel.lbl_mic_status.setText("Mic VAD: 🔴 Listening / Ready")
                         self._ai_panel.lbl_mic_status.setStyleSheet("color: #94A9C4;")
 
                 self._vad_worker.sig_vad_status.connect(_on_vad_status)
@@ -718,23 +738,56 @@ class ROVMainWindow(QMainWindow):
                 if hasattr(self._ai_panel, 'sig_voice_command_submitted'):
                     self._ai_panel.sig_voice_command_submitted.connect(self._process_pilot_voice_command)
 
+                if hasattr(self._ai_panel, 'sig_voice_agent_enabled'):
+                    def _on_voice_agent_toggle(enabled: bool):
+                        self._voice_agent_enabled = enabled
+                        if enabled:
+                            if self._vad_worker and not self._vad_worker.isRunning():
+                                self._vad_worker.start()
+                            if self._tts_worker and not self._tts_worker.isRunning():
+                                self._tts_worker.start()
+                            self._ai_panel.lbl_mic_status.setText("Mic VAD: 🔴 Listening / Ready")
+                            self._ai_panel.lbl_mic_status.setStyleSheet("color: #94A9C4;")
+                            self._ai_panel.lbl_agent_speech.setText("Agent: Voice Agent ON (Ready)")
+                            if hasattr(self, 'power_widget') and self.power_widget:
+                                self.power_widget.add_log("🎙 Trợ lý Giọng nói đã BẬT", "SUCCESS")
+                        else:
+                            if self._vad_worker:
+                                self._vad_worker.stop()
+                            if self._tts_worker:
+                                # Stop and clear speech queue instantly
+                                while not self._tts_worker._speech_queue.empty():
+                                    try:
+                                        self._tts_worker._speech_queue.get_nowait()
+                                    except Exception:
+                                        break
+                            self._ai_panel.lbl_mic_status.setText("Mic VAD: ⏸ DISABLED (TẮT)")
+                            self._ai_panel.lbl_mic_status.setStyleSheet("color: #FF5252; font-weight: bold;")
+                            self._ai_panel.lbl_agent_speech.setText("Agent: Voice Agent OFF (TẮT)")
+                            if hasattr(self, 'power_widget') and self.power_widget:
+                                self.power_widget.add_log("⏸ Trợ lý Giọng nói đã TẮT", "WARNING")
+
+                    self._ai_panel.sig_voice_agent_enabled.connect(_on_voice_agent_toggle)
+
                 if hasattr(self._ai_panel, 'sig_ptt_pressed'):
                     def _on_ptt_pressed():
-                        self._ai_panel.lbl_mic_status.setText("Mic PTT: 🟢 ĐANG THU ÂM (NHẤN GIỮ)...")
-                        self._ai_panel.lbl_mic_status.setStyleSheet("color: #00FF9D; font-weight: bold;")
-                        if self._vad_worker:
-                            self._vad_worker._is_speaking = True
-                            self._vad_worker._audio_buffer = []
+                        if getattr(self, '_voice_agent_enabled', True):
+                            self._ai_panel.lbl_mic_status.setText("Mic PTT: 🟢 ĐANG THU ÂM (NHẤN GIỮ)...")
+                            self._ai_panel.lbl_mic_status.setStyleSheet("color: #00FF9D; font-weight: bold;")
+                            if self._vad_worker:
+                                self._vad_worker._is_speaking = True
+                                self._vad_worker._audio_buffer = []
 
                     def _on_ptt_released():
-                        self._ai_panel.lbl_mic_status.setText("Mic VAD: 🔴 Listening / Ready")
-                        self._ai_panel.lbl_mic_status.setStyleSheet("color: #94A9C4;")
-                        if self._vad_worker and hasattr(self._vad_worker, '_audio_buffer') and len(self._vad_worker._audio_buffer) > 0:
-                            import numpy as np
-                            full_audio = np.concatenate(self._vad_worker._audio_buffer)
-                            self._vad_worker.sig_speech_end.emit(full_audio)
-                            self._vad_worker._audio_buffer = []
-                            self._vad_worker._is_speaking = False
+                        if getattr(self, '_voice_agent_enabled', True):
+                            self._ai_panel.lbl_mic_status.setText("Mic VAD: 🔴 Listening / Ready")
+                            self._ai_panel.lbl_mic_status.setStyleSheet("color: #94A9C4;")
+                            if self._vad_worker and hasattr(self._vad_worker, '_audio_buffer') and len(self._vad_worker._audio_buffer) > 0:
+                                import numpy as np
+                                full_audio = np.concatenate(self._vad_worker._audio_buffer)
+                                self._vad_worker.sig_speech_end.emit(full_audio)
+                                self._vad_worker._audio_buffer = []
+                                self._vad_worker._is_speaking = False
 
                     self._ai_panel.sig_ptt_pressed.connect(_on_ptt_pressed)
                     self._ai_panel.sig_ptt_released.connect(_on_ptt_released)
@@ -744,7 +797,7 @@ class ROVMainWindow(QMainWindow):
                 def _on_cv_alert(err_text):
                     if "CV CRITICAL ALERT" in err_text:
                         alert_desc = err_text.replace("⚠️ CV CRITICAL ALERT:", "").strip()
-                        if self._agent_brain and self._tts_worker:
+                        if self._agent_brain and self._tts_worker and getattr(self, '_voice_agent_enabled', True):
                             out = self._agent_brain.process_emergency_event("critical_alert", alert_desc)
                             self._tts_worker.speak(out.speech_response, is_emergency=True)
 
@@ -753,6 +806,7 @@ class ROVMainWindow(QMainWindow):
             # Start workers
             self._tts_worker.start()
             self._vad_worker.start()
+            self._voice_agent_enabled = True
 
             # Giới thiệu tự động khi khởi động phần mềm
             welcome_text = "Tôi là CNX VIC, trợ lý ảo chuyên nghiệp sẽ hỗ trợ bạn trong suốt quá trình làm việc."
@@ -766,9 +820,12 @@ class ROVMainWindow(QMainWindow):
         except Exception as exc:
             print(f"[Main] Error starting Voice Agent: {exc}")
 
-    def _process_pilot_voice_command(self, text: str):
-        """Process transcribed voice command from pilot using rich CURRENT_ROV_STATE context."""
+    def _process_pilot_voice_command(self, text: str = "", pcm_audio = None):
+        """Process transcribed voice command from pilot using async background worker (0% GUI freeze)."""
         if not self._agent_brain:
+            return
+        if hasattr(self, '_voice_agent_enabled') and not self._voice_agent_enabled:
+            print("[Main] Voice Agent is disabled. Ignoring input.")
             return
 
         telemetry = {
@@ -787,29 +844,39 @@ class ROVMainWindow(QMainWindow):
             "mode": str(getattr(self, '_flight_mode', "ALT_HOLD")),
         }
 
-        output, immediate_action = self._agent_brain.process_pilot_input(text, telemetry)
+        # Run STT & LLM off the Qt GUI Main Thread in an async QThread
+        worker = AgentAsyncWorker(self._agent_brain, text, pcm_audio, self._stt_worker, telemetry, parent=self)
 
-        # 1. Update UI & Speech Output
-        if output and output.speech_response:
-            if self._tts_worker:
-                self._tts_worker.speak(output.speech_response)
+        def _on_async_completed(output, immediate_action):
+            # Check if voice agent was disabled while worker was processing in background
+            if hasattr(self, '_voice_agent_enabled') and not self._voice_agent_enabled:
+                print("[Main] Async worker completed but Voice Agent is disabled. Suppressing response.")
+                return
+
+            # 1. Update UI & Speech Output on Main Thread
+            if output and output.speech_response:
+                if self._tts_worker:
+                    self._tts_worker.speak(output.speech_response)
+                if self._ai_panel:
+                    self._ai_panel.lbl_agent_speech.setText(f"Agent: {output.speech_response}")
+                if hasattr(self, 'power_widget') and self.power_widget:
+                    self.power_widget.add_log(f"🎙 Agent: {output.speech_response}", "INFO")
+
+            # 2. Update Safety Confirmation Box on UI
             if self._ai_panel:
-                self._ai_panel.lbl_agent_speech.setText(f"Agent: {output.speech_response}")
-            if hasattr(self, 'power_widget') and self.power_widget:
-                self.power_widget.add_log(f"🎙 Agent: {output.speech_response}", "INFO")
+                pending = self._agent_brain.safety_guard.get_pending_action()
+                if pending:
+                    self._ai_panel.lbl_safety_prompt.setText(f"CẦN XÁC NHẬN: {pending.get('description')}")
+                    self._ai_panel.grp_safety.setVisible(True)
+                else:
+                    self._ai_panel.grp_safety.setVisible(False)
 
-        # 2. Update Safety Confirmation Box on UI
-        if self._ai_panel:
-            pending = self._agent_brain.safety_guard.get_pending_action()
-            if pending:
-                self._ai_panel.lbl_safety_prompt.setText(f"CẦN XÁC NHẬN: {pending.get('description')}")
-                self._ai_panel.grp_safety.setVisible(True)
-            else:
-                self._ai_panel.grp_safety.setVisible(False)
+            # 3. Execute Immediate Action if approved
+            if immediate_action:
+                self._dispatch_agent_action(immediate_action.get("action"), immediate_action.get("params", {}))
 
-        # 3. Execute Immediate Action if approved
-        if immediate_action:
-            self._dispatch_agent_action(immediate_action.get("action"), immediate_action.get("params", {}))
+        worker.sig_result_ready.connect(_on_async_completed)
+        worker.start()
 
     def _dispatch_agent_action(self, action_name: str, params: dict):
         """Execute dispatched MAVLink / UI actions from Agent."""

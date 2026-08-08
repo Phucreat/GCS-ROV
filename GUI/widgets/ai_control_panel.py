@@ -282,6 +282,7 @@ class AIControlPanel(QWidget):
     sig_track_class_changed = pyqtSignal(str)
     sig_track_gain_changed  = pyqtSignal(float)
     sig_voice_command_submitted = pyqtSignal(str)
+    sig_voice_agent_enabled     = pyqtSignal(bool)
     sig_ptt_pressed  = pyqtSignal()
     sig_ptt_released = pyqtSignal()
 
@@ -330,6 +331,7 @@ class AIControlPanel(QWidget):
 
         self.chk_voice_agent = QCheckBox("Enable Voice Agent (VAD + SLM + TTS)")
         self.chk_voice_agent.setChecked(True)
+        self.chk_voice_agent.toggled.connect(self.sig_voice_agent_enabled.emit)
         lay.addWidget(self.chk_voice_agent)
 
         # Push-To-Talk (PTT) Button (Chống đơ & lọc lệnh rác)
