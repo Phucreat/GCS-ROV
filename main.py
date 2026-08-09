@@ -143,15 +143,16 @@ ROV_MODELS = {
 # ==============================================================
 class AgentAsyncWorker(QtCore.QThread):
     """Worker QThread running Whisper STT & Agent Brain LLM off the Qt GUI main thread."""
-    sig_result_ready = QtCore.pyqtSignal(object, object)  # (output, immediate_action)
+    sig_result_ready = QtCore.pyqtSignal(object, object, str)  # (output, immediate_action, cmd_text)
 
-    def __init__(self, agent_brain, text: str, pcm_audio, stt_worker, telemetry: dict, parent=None):
+    def __init__(self, agent_brain, text: str, pcm_audio, stt_worker, telemetry: dict, is_ptt: bool = False, parent=None):
         super().__init__(parent)
         self._brain = agent_brain
         self._text = text
         self._pcm_audio = pcm_audio
         self._stt_worker = stt_worker
         self._telemetry = telemetry
+        self._is_ptt = is_ptt
 
     def run(self):
         try:
@@ -162,13 +163,13 @@ class AgentAsyncWorker(QtCore.QThread):
                 print(f"[AgentAsyncWorker] Transcribed text: '{cmd_text}'")
 
             if cmd_text and self._brain:
-                output, immediate_action = self._brain.process_pilot_input(cmd_text, self._telemetry)
-                self.sig_result_ready.emit(output, immediate_action)
+                output, immediate_action = self._brain.process_pilot_input(cmd_text, self._telemetry, is_ptt=self._is_ptt)
+                self.sig_result_ready.emit(output, immediate_action, cmd_text)
             else:
-                self.sig_result_ready.emit(None, None)
+                self.sig_result_ready.emit(None, None, "")
         except Exception as exc:
             print(f"[AgentAsyncWorker] Error during async processing: {exc}")
-            self.sig_result_ready.emit(None, None)
+            self.sig_result_ready.emit(None, None, "")
 
 
 class ROVMainWindow(QMainWindow):
@@ -713,24 +714,43 @@ class ROVMainWindow(QMainWindow):
             self._tts_worker = TTSWorker()
             self._vad_worker = VADWorker()
 
-            # Connect VAD speech end -> Async STT & Agent Brain Worker (Off Main Thread)
+            self._ptt_active = False
+            self._wake_word_enabled = True
+
+            # Connect VAD speech end -> Async STT & Agent Brain Worker
             def _on_speech_captured(pcm_audio):
-                print(f"[Main] Captured audio speech buffer ({len(pcm_audio)} samples). Dispatching to async worker...")
-                self._process_pilot_voice_command(text="", pcm_audio=pcm_audio)
+                if pcm_audio is None or len(pcm_audio) < 2400:
+                    return
+                print(f"[Main] Captured audio speech clip ({len(pcm_audio)} samples). Dispatching to STT...")
+                self._process_pilot_voice_command(text="", pcm_audio=pcm_audio, is_ptt=True)
 
             self._vad_worker.sig_speech_end.connect(_on_speech_captured)
 
             # Connect VAD mic status to AI Panel
             if self._ai_panel:
                 def _on_vad_status(is_speaking, energy):
-                    if is_speaking:
-                        self._ai_panel.lbl_mic_status.setText(f"Mic VAD: 🟢 Speech Detected ({energy:.2f})")
+                    if getattr(self, '_ptt_active', False):
+                        self._ai_panel.lbl_mic_status.setText(f"Mic PTT: 🟢 ĐANG THU ÂM (NHẤN GIỮ)... ({energy:.2f})")
                         self._ai_panel.lbl_mic_status.setStyleSheet("color: #00FF9D; font-weight: bold;")
+                    elif getattr(self, '_wake_word_enabled', True):
+                        if is_speaking:
+                            self._ai_panel.lbl_mic_status.setText(f"Mic VAD: 🟢 Speech Detected ({energy:.2f})")
+                            self._ai_panel.lbl_mic_status.setStyleSheet("color: #00FF9D; font-weight: bold;")
+                        else:
+                            self._ai_panel.lbl_mic_status.setText("Mic VAD: 🟢 Lắng nghe 'Hey VIC' / 'VIC ơi'")
+                            self._ai_panel.lbl_mic_status.setStyleSheet("color: #00D4FF; font-weight: bold;")
                     else:
-                        self._ai_panel.lbl_mic_status.setText("Mic VAD: 🔴 Listening / Ready")
+                        self._ai_panel.lbl_mic_status.setText("Mic PTT: 🔒 MUTED (NHẤN NÚT ĐỂ NÓI)")
                         self._ai_panel.lbl_mic_status.setStyleSheet("color: #94A9C4;")
 
                 self._vad_worker.sig_vad_status.connect(_on_vad_status)
+
+                if hasattr(self._ai_panel, 'sig_wake_word_toggled'):
+                    def _on_wake_word_toggle(enabled: bool):
+                        self._wake_word_enabled = enabled
+                        status_str = "🟢 Lắng nghe 'Hey VIC' / 'VIC ơi'" if enabled else "🔒 MUTED (NHẤN NÚT ĐỂ NÓI)"
+                        self._ai_panel.lbl_mic_status.setText(f"Mic VAD: {status_str}")
+                    self._ai_panel.sig_wake_word_toggled.connect(_on_wake_word_toggle)
 
                 # Connect UI Safety confirmation buttons, Text command input & Push-To-Talk
                 self._ai_panel.btn_confirm_action.clicked.connect(lambda: self._process_pilot_voice_command("Xác nhận"))
@@ -746,11 +766,11 @@ class ROVMainWindow(QMainWindow):
                                 self._vad_worker.start()
                             if self._tts_worker and not self._tts_worker.isRunning():
                                 self._tts_worker.start()
-                            self._ai_panel.lbl_mic_status.setText("Mic VAD: 🔴 Listening / Ready")
+                            self._ai_panel.lbl_mic_status.setText("Mic PTT: 🔒 MUTED (NHẤN NÚT ĐỂ NÓI)")
                             self._ai_panel.lbl_mic_status.setStyleSheet("color: #94A9C4;")
-                            self._ai_panel.lbl_agent_speech.setText("Agent: Voice Agent ON (Ready)")
+                            self._ai_panel.lbl_agent_speech.setText("Agent: Voice Agent ON (Push-To-Talk Ready)")
                             if hasattr(self, 'power_widget') and self.power_widget:
-                                self.power_widget.add_log("🎙 Trợ lý Giọng nói đã BẬT", "SUCCESS")
+                                self.power_widget.add_log("🎙 Trợ lý Giọng nói đã BẬT (Push-To-Talk)", "SUCCESS")
                         else:
                             if self._vad_worker:
                                 self._vad_worker.stop()
@@ -761,7 +781,7 @@ class ROVMainWindow(QMainWindow):
                                         self._tts_worker._speech_queue.get_nowait()
                                     except Exception:
                                         break
-                            self._ai_panel.lbl_mic_status.setText("Mic VAD: ⏸ DISABLED (TẮT)")
+                            self._ai_panel.lbl_mic_status.setText("Mic PTT: ⏸ DISABLED (TẮT)")
                             self._ai_panel.lbl_mic_status.setStyleSheet("color: #FF5252; font-weight: bold;")
                             self._ai_panel.lbl_agent_speech.setText("Agent: Voice Agent OFF (TẮT)")
                             if hasattr(self, 'power_widget') and self.power_widget:
@@ -772,6 +792,7 @@ class ROVMainWindow(QMainWindow):
                 if hasattr(self._ai_panel, 'sig_ptt_pressed'):
                     def _on_ptt_pressed():
                         if getattr(self, '_voice_agent_enabled', True):
+                            self._ptt_active = True
                             self._ai_panel.lbl_mic_status.setText("Mic PTT: 🟢 ĐANG THU ÂM (NHẤN GIỮ)...")
                             self._ai_panel.lbl_mic_status.setStyleSheet("color: #00FF9D; font-weight: bold;")
                             if self._vad_worker:
@@ -780,14 +801,18 @@ class ROVMainWindow(QMainWindow):
 
                     def _on_ptt_released():
                         if getattr(self, '_voice_agent_enabled', True):
-                            self._ai_panel.lbl_mic_status.setText("Mic VAD: 🔴 Listening / Ready")
+                            was_active = getattr(self, '_ptt_active', False)
+                            self._ptt_active = False
+                            self._ai_panel.lbl_mic_status.setText("Mic PTT: 🔒 MUTED (NHẤN NÚT ĐỂ NÓI)")
                             self._ai_panel.lbl_mic_status.setStyleSheet("color: #94A9C4;")
-                            if self._vad_worker and hasattr(self._vad_worker, '_audio_buffer') and len(self._vad_worker._audio_buffer) > 0:
-                                import numpy as np
-                                full_audio = np.concatenate(self._vad_worker._audio_buffer)
-                                self._vad_worker.sig_speech_end.emit(full_audio)
-                                self._vad_worker._audio_buffer = []
+                            if was_active and self._vad_worker:
                                 self._vad_worker._is_speaking = False
+                                buf = getattr(self._vad_worker, '_audio_buffer', [])
+                                self._vad_worker._audio_buffer = []
+                                if buf and len(buf) > 0:
+                                    import numpy as np
+                                    full_audio = np.concatenate(buf)
+                                    self._process_pilot_voice_command(text="", pcm_audio=full_audio)
 
                     self._ai_panel.sig_ptt_pressed.connect(_on_ptt_pressed)
                     self._ai_panel.sig_ptt_released.connect(_on_ptt_released)
@@ -820,7 +845,7 @@ class ROVMainWindow(QMainWindow):
         except Exception as exc:
             print(f"[Main] Error starting Voice Agent: {exc}")
 
-    def _process_pilot_voice_command(self, text: str = "", pcm_audio = None):
+    def _process_pilot_voice_command(self, text: str = "", pcm_audio = None, is_ptt: bool = False):
         """Process transcribed voice command from pilot using async background worker (0% GUI freeze)."""
         if not self._agent_brain:
             return
@@ -828,15 +853,24 @@ class ROVMainWindow(QMainWindow):
             print("[Main] Voice Agent is disabled. Ignoring input.")
             return
 
+        voltage = float(getattr(self, '_voltage', 16.8))
+        if voltage >= 14.0 and voltage <= 16.8:
+            battery_pct = max(0, min(100, int((voltage - 14.0) / 2.8 * 100)))
+        else:
+            battery_pct = int(self.settings.get("battery_pct", 85))
+
+        temp_c = float(self._named_sensors.get("TEMP", 28.5)) if hasattr(self, '_named_sensors') and isinstance(self._named_sensors, dict) and "TEMP" in self._named_sensors else 28.5
+
         telemetry = {
             "depth": round(float(getattr(self, '_depth', 0.0)), 2),
             "depth_m": round(float(getattr(self, '_depth', 0.0)), 2),
-            "voltage": round(float(getattr(self, '_voltage', 0.0)), 1),
-            "voltage_v": round(float(getattr(self, '_voltage', 0.0)), 1),
+            "voltage": round(voltage, 1),
+            "voltage_v": round(voltage, 1),
             "heading": round(float(getattr(self, '_heading', 0.0)), 1),
             "heading_deg": round(float(getattr(self, '_heading', 0.0)), 1),
-            "battery_pct": int(self.settings.get("battery_pct", 78)),
-            "internal_temp_c": round(float(getattr(self, '_temp', 38.5)), 1),
+            "battery_pct": battery_pct,
+            "internal_temp_c": round(temp_c, 1),
+            "temp": round(temp_c, 1),
             "leak_detected": bool(getattr(self, '_leak_detected', False)),
             "ekf3_status": "GOOD",
             "lights_intensity_pct": getattr(self, '_lights_val', 100 if getattr(self, '_lights_on', True) else 0),
@@ -845,13 +879,20 @@ class ROVMainWindow(QMainWindow):
         }
 
         # Run STT & LLM off the Qt GUI Main Thread in an async QThread
-        worker = AgentAsyncWorker(self._agent_brain, text, pcm_audio, self._stt_worker, telemetry, parent=self)
+        worker = AgentAsyncWorker(self._agent_brain, text, pcm_audio, self._stt_worker, telemetry, is_ptt=is_ptt, parent=self)
 
-        def _on_async_completed(output, immediate_action):
+        def _on_async_completed(output, immediate_action, cmd_text):
             # Check if voice agent was disabled while worker was processing in background
             if hasattr(self, '_voice_agent_enabled') and not self._voice_agent_enabled:
                 print("[Main] Async worker completed but Voice Agent is disabled. Suppressing response.")
                 return
+
+            if output is None or not output.speech_response:
+                print("[Main] Empty or invalid agent response. Ignoring UI update.")
+                return
+
+            if cmd_text and self._ai_panel and hasattr(self._ai_panel, 'txt_voice_cmd'):
+                self._ai_panel.txt_voice_cmd.setText(cmd_text)
 
             # 1. Update UI & Speech Output on Main Thread
             if output and output.speech_response:

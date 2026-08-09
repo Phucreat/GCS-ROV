@@ -83,73 +83,61 @@ class VADWorker(QThread):
         print("[VADWorker] Voice Activity Detection thread started.")
 
         audio_stream = None
-        # Attempt sounddevice mic stream with native sample rate + auto-resampling
+        # ── Method 0: Native SpeechRecognition Microphone Engine (100% Reliable) ── #
         try:
-            import sounddevice as sd
+            import speech_recognition as sr
+            rec = sr.Recognizer()
+            rec.energy_threshold = 300
+            rec.dynamic_energy_threshold = True
+            rec.pause_threshold = 0.5
 
-            try:
-                dev_info = sd.query_devices(kind="input")
-                native_sr = int(dev_info.get("default_samplerate", 44100))
-            except Exception:
-                native_sr = 44100
+            with sr.Microphone() as source:
+                print(f"[VADWorker] Native SpeechRecognition microphone initialized on '{source}'. Calibrating noise...")
+                try:
+                    rec.adjust_for_ambient_noise(source, duration=0.3)
+                except Exception:
+                    pass
+                print("[VADWorker] Native SpeechRecognition microphone ready!")
 
-            def audio_callback(indata, frames, time_info, status):
-                if not self._running:
-                    return
-                pcm_raw = indata[:, 0].astype(np.float32)
-                if native_sr != 16000 and len(pcm_raw) > 0:
-                    target_len = int(len(pcm_raw) * 16000 / native_sr)
-                    if target_len > 0:
-                        pcm_16k = np.interp(
-                            np.linspace(0, len(pcm_raw) - 1, target_len),
-                            np.arange(len(pcm_raw)),
-                            pcm_raw,
-                        ).astype(np.float32)
-                    else:
-                        pcm_16k = pcm_raw
-                else:
-                    pcm_16k = pcm_raw
+                while self._running:
+                    try:
+                        audio = rec.listen(source, timeout=1.0, phrase_time_limit=6.0)
+                        if audio and self._running:
+                            wav_bytes = audio.get_raw_data(convert_rate=16000, convert_width=2)
+                            pcm_int = np.frombuffer(wav_bytes, dtype=np.int16)
+                            pcm_float = pcm_int.astype(np.float32) / 32768.0
+                            print(f"[VADWorker] Captured speech audio clip ({len(pcm_float)} samples @ 16kHz). Emitting speech end.")
+                            self.sig_speech_end.emit(pcm_float)
+                    except sr.WaitTimeoutError:
+                        pass
+                    except Exception:
+                        time.sleep(0.1)
 
-                self._process_audio_chunk(pcm_16k)
-
-            audio_stream = sd.InputStream(
-                samplerate=native_sr,
-                channels=1,
-                dtype="float32",
-                blocksize=int(native_sr * 0.03), # 30ms block
-                callback=audio_callback,
-            )
-            audio_stream.start()
-
-            while self._running:
-                time.sleep(0.1)
-
-            audio_stream.stop()
-            audio_stream.close()
-
+            return
         except Exception as exc:
-            print(f"[VADWorker] SoundDevice stream error: {exc}. Trying PyAudio fallback...")
+            print(f"[VADWorker] Native SpeechRecognition Mic error: {exc}. Trying PyAudio fallback...")
             try:
-                import pyaudio
-                p = pyaudio.PyAudio()
-                stream = p.open(
-                    format=pyaudio.paFloat32,
+                import sounddevice as sd
+                def audio_callback(indata, frames, time_info, status):
+                    if not self._running:
+                        return
+                    pcm_16k = indata[:, 0].astype(np.float32)
+                    self._process_audio_chunk(pcm_16k)
+
+                audio_stream = sd.InputStream(
+                    samplerate=16000,
                     channels=1,
-                    rate=16000,
-                    input=True,
-                    frames_per_buffer=480,
+                    dtype="float32",
+                    blocksize=480,
+                    callback=audio_callback,
                 )
+                audio_stream.start()
                 while self._running:
-                    data = stream.read(480, exception_on_overflow=False)
-                    pcm = np.frombuffer(data, dtype=np.float32)
-                    self._process_audio_chunk(pcm)
-                stream.stop_stream()
-                stream.close()
-                p.terminate()
+                    time.sleep(0.1)
+                audio_stream.stop()
+                audio_stream.close()
             except Exception as e:
-                print(f"[VADWorker] PyAudio fallback error: {e}. VAD running in passive mode.")
-                while self._running:
-                    time.sleep(0.5)
+                print(f"[VADWorker] SoundDevice fallback error: {e}.")
 
     def _process_audio_chunk(self, chunk: np.ndarray) -> None:
         """Process 30ms audio chunk with dynamic noise floor tracking VAD."""
@@ -160,9 +148,9 @@ class VADWorker(QThread):
 
         # Dynamic Noise Floor Tracking (Exponential Moving Average)
         if not hasattr(self, "_noise_floor") or self._noise_floor is None:
-            self._noise_floor = 0.000015
+            self._noise_floor = 0.005
 
-        if energy < self._noise_floor * 3.0 and energy > 0:
+        if energy < self._noise_floor * 2.0 and energy > 0:
             self._noise_floor = 0.95 * self._noise_floor + 0.05 * energy
 
         model = _get_silero_vad()
@@ -171,17 +159,23 @@ class VADWorker(QThread):
         if model is not None:
             try:
                 import torch
-                tensor_chunk = torch.from_numpy(chunk)
-                speech_prob = model(tensor_chunk, self._sample_rate).item()
+                # Silero VAD v4 requires exact 512-sample chunks @ 16kHz
+                if len(chunk) != 512:
+                    vad_input = np.pad(chunk, (0, max(0, 512 - len(chunk))))[:512]
+                else:
+                    vad_input = chunk
+                tensor_chunk = torch.from_numpy(vad_input)
+                speech_prob = float(model(tensor_chunk, 16000).item())
             except Exception:
-                speech_prob = 0.9 if energy > (self._noise_floor * 2.5) and energy > 0.00003 else 0.0
+                speech_prob = 0.9 if energy > (self._noise_floor * 1.8) and energy > 0.001 else 0.0
         else:
-            # Dynamic energy threshold fallback: 2.5x above ambient noise floor or > 0.00003
-            speech_prob = 0.9 if energy > (self._noise_floor * 2.5) and energy > 0.00003 else 0.0
+            speech_prob = 0.9 if energy > (self._noise_floor * 1.8) and energy > 0.001 else 0.0
 
-        self.sig_vad_status.emit(speech_prob >= self._threshold, speech_prob)
+        # Sensitive speech detection threshold
+        is_speech = speech_prob >= 0.45 or (energy > (self._noise_floor * 2.2) and energy > 0.0015)
+        self.sig_vad_status.emit(is_speech, speech_prob)
 
-        if speech_prob >= self._threshold:
+        if is_speech:
             if not self._is_speaking:
                 self._is_speaking = True
                 self.sig_speech_start.emit()
@@ -190,25 +184,30 @@ class VADWorker(QThread):
             self._audio_buffer.append(chunk)
             self._silence_frames = 0
 
-            # Max utterance cap (~3.0s of continuous speech = 100 chunks of 30ms) -> Auto flush
-            if len(self._audio_buffer) >= 100:
+            # Max utterance cap (~6.0s of continuous speech = 200 chunks of 30ms) -> Auto flush
+            if len(self._audio_buffer) >= 200:
                 self._is_speaking = False
                 full_audio = np.concatenate(self._audio_buffer)
-                print(f"[VADWorker] Speech max cap reached ({len(full_audio)} samples). Emitting speech end.")
-                self.sig_speech_end.emit(full_audio)
                 self._audio_buffer = []
                 self._silence_frames = 0
+                if len(full_audio) >= 8000:  # Minimum 0.5s audio (8000 samples @ 16kHz)
+                    print(f"[VADWorker] Speech max cap reached ({len(full_audio)} samples). Emitting speech end.")
+                    self.sig_speech_end.emit(full_audio)
         else:
             if self._is_speaking:
                 self._audio_buffer.append(chunk)
                 self._silence_frames += 1
 
-                if self._silence_frames >= 6:  # ~180ms silence triggers end of speech quickly
+                if self._silence_frames >= 15:  # ~450ms silence triggers natural speech end
                     # End of speech detected
                     self._is_speaking = False
                     if len(self._audio_buffer) > 0:
                         full_audio = np.concatenate(self._audio_buffer)
-                        print(f"[VADWorker] End of speech detected ({len(full_audio)} samples). Emitting speech end.")
-                        self.sig_speech_end.emit(full_audio)
-                    self._audio_buffer = []
-                    self._silence_frames = 0
+                        self._audio_buffer = []
+                        self._silence_frames = 0
+                        if len(full_audio) >= 8000:  # Minimum 0.5s audio (8000 samples @ 16kHz)
+                            print(f"[VADWorker] End of speech detected ({len(full_audio)} samples). Emitting speech end.")
+                            self.sig_speech_end.emit(full_audio)
+                    else:
+                        self._audio_buffer = []
+                        self._silence_frames = 0

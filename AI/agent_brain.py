@@ -141,15 +141,48 @@ class ROVAgentBrain:
                 print(f"[AgentBrain] Error loading SOP rules: {e}")
         return []
 
-    def process_pilot_input(
-        self, text: str, telemetry_context: Dict[str, Any]
-    ) -> Tuple[AgentOutputSchema, Optional[Dict]]:
+    WAKE_WORD_ALIASES = ["hey vic", "vic ơi", "trợ lý vic", "cnx vic", "vic", "hey aero", "aero ơi", "aero"]
+
+    def extract_wake_word(self, text: str) -> Tuple[bool, str]:
         """
-        Process pilot voice text input.
-        Returns:
-          - (AgentOutputSchema, action_to_execute_immediately_if_any)
+        Check if text contains Wake Word ("Hey VIC", "VIC ơi", "CNX VIC").
+        Returns (has_wake_word, clean_command_without_wake_word).
         """
         text_clean = text.strip()
+        text_lower = text_clean.lower()
+        has_wake = False
+        command = text_clean
+
+        for wake in self.WAKE_WORD_ALIASES:
+            if wake in text_lower:
+                has_wake = True
+                import re
+                pattern = re.compile(re.escape(wake), re.IGNORECASE)
+                command = pattern.sub("", command).strip(" ,.!?:;-")
+                break
+
+        return has_wake, command
+
+    def process_pilot_input(
+        self, text: str, telemetry_context: Dict[str, Any], is_ptt: bool = True
+    ) -> Tuple[Optional[AgentOutputSchema], Optional[Dict]]:
+        """
+        Process pilot voice text input.
+        Strips Wake Word prefix ("Hey VIC", "VIC ơi") if present, and executes command or chat.
+        """
+        text_clean = text.strip()
+        if not text_clean:
+            return None, None
+
+        # Clean off optional Wake Word prefix ("Hey VIC", "VIC ơi", "CNX VIC")
+        has_wake, command_text = self.extract_wake_word(text_clean)
+        if command_text:
+            text_clean = command_text
+        elif has_wake and not command_text:
+            # User just called the assistant name ("Hey VIC" / "VIC ơi")
+            speech = "CNX VIC nghe đây! Bạn cần hỗ trợ gì?"
+            out = AgentOutputSchema(intent="chat", speech_response=speech)
+            return out, None
 
         # Step 1: Check if pilot is replying to a PENDING SAFETY CONFIRMATION
         if self.safety_guard.has_pending_confirmation():
@@ -171,7 +204,18 @@ class ROVAgentBrain:
                 )
                 return output, None
 
-        # Step 2: Try Local SLM (Qwen2.5 via Ollama)
+        # Step 2: High-Precision Deterministic Hardware & Telemetry Engine (0ms Latency Priority)
+        text_lower = text_clean.lower()
+        is_hardware_or_telemetry = any(k in text_lower for k in [
+            "đèn", "bật", "tắt", "rọi", "arm", "disarm", "động cơ", "ngắt", "khẩn cấp",
+            "độ sâu", "điện áp", "pin", "dung lượng", "nhiệt độ", "thông số", "cảm biến",
+            "quy trình", "hướng dẫn", "sop", "chụp ảnh", "lưu ảnh", "snapshot"
+        ])
+
+        if is_hardware_or_telemetry:
+            return self._rule_based_fallback(text_clean, telemetry_context)
+
+        # Step 3: Local SLM (Qwen2.5 via Ollama) for Casual Chat & Morale Support
         ctx_str = f"Depth={telemetry_context.get('depth', 0.0)}m, Voltage={telemetry_context.get('voltage', 0.0)}V, Mode={telemetry_context.get('mode', 'MANUAL')}"
         slm_res = self.slm_engine.generate_agent_response(text_clean, ctx_str)
 
@@ -187,7 +231,7 @@ class ROVAgentBrain:
             except Exception as exc:
                 print(f"[AgentBrain] Pydantic parsing error: {exc}")
 
-        # Step 3: Fast Rule-Based Fallback (Zero-latency offline regex)
+        # Fallback to rule engine if Ollama is offline or unparseable
         return self._rule_based_fallback(text_clean, telemetry_context)
 
     def process_emergency_event(self, event_type: str, details: str) -> AgentOutputSchema:
@@ -228,22 +272,27 @@ class ROVAgentBrain:
         self, text: str, telemetry: Dict[str, Any]
     ) -> Tuple[AgentOutputSchema, Optional[Dict]]:
         """High-speed offline keyword parser for voice commands & SOP RAG."""
-        text_lower = text.lower()
+        # Phonetic Vietnamese Normalization for noisy speech recognition
+        text_lower = (
+            text.lower()
+            .replace("bậc", "bật").replace("đền", "đèn").replace("đen", "đèn")
+            .replace("tắc", "tắt").replace("gát", "ngắt").replace("gắt", "ngắt")
+        )
         depth = telemetry.get("depth", 0.0)
 
         # 0. Agent Identity & Friendly Morale Chat (Nhiệm vụ 1: Tâm sự & Trò chuyện)
         if any(k in text_lower for k in ["tên gì", "tên là gì", "bạn là ai", "ai đây", "who are you", "giới thiệu"]):
-            speech = "Tôi là CNX VIC, trợ lý ảo AI chuyên nghiệp sẽ hỗ trợ bạn trong suốt quá trình vận hành robot lặn ngầm."
+            speech = "Tôi là CNX VIC, trợ lý ảo AI chuyên nghiệp hỗ trợ vận hành robot lặn ngầm."
             out = AgentOutputSchema(intent="chat", speech_response=speech)
             return out, None
 
         elif any(k in text_lower for k in ["sóng to", "rợn tóc gáy", "sợ quá", "biển xấu"]):
-            speech = f"Sóng gió trên mặt nước không làm khó được CNX VIC đâu! Tớ vẫn đang giám sát độ sâu {depth:.1f}m rất ổn định, bạn cứ yên tâm giữ vững tay lái nhé!"
+            speech = f"Sóng lớn không làm khó được CNX VIC đâu! Hệ thống đang giữ độ sâu {depth:.1f}m rất ổn định."
             out = AgentOutputSchema(intent="chat", speech_response=speech)
             return out, None
 
         elif any(k in text_lower for k in ["mệt quá", "căng thẳng", "đuối quá"]):
-            speech = "Bạn nghỉ tay uống hụm nước đi nhé, CNX VIC vẫn đang hỗ trợ bạn duy trì ổn định toàn bộ hệ thống."
+            speech = "Bạn nghỉ tay một chút nhé, CNX VIC đang giám sát toàn bộ hệ thống."
             out = AgentOutputSchema(intent="chat", speech_response=speech)
             return out, None
 
@@ -251,7 +300,7 @@ class ROVAgentBrain:
         # Ý định ngầm: "Tối quá", "Không thấy gì", "Tối thui" -> Tăng đèn rọi 100%
         if any(k in text_lower for k in ["tối quá", "tối thui", "không nhìn thấy", "chẳng nhìn rõ", "tối"]):
             action = "set_lights"
-            speech = "Tớ đã tăng đèn rọi Subsea lên 100% độ sáng cho bạn quan sát rõ hơn rồi nhé."
+            speech = "Đã tăng đèn rọi Subsea lên 100% độ sáng."
             out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"value": 100}), speech_response=speech)
             return self._evaluate_safety_and_build(out)
 
@@ -283,18 +332,52 @@ class ROVAgentBrain:
         elif "bật đèn" in text_lower or "tắt đèn" in text_lower or "đèn rọi" in text_lower or "đèn" in text_lower:
             action = "set_lights"
             val = 0 if "tắt" in text_lower else 100
-            speech = f"Đã {'tắt' if val==0 else 'bật'} đèn rọi Subsea. Độ sâu hiện tại là {depth:.1f} mét."
+            import re
+            nums = re.findall(r"\d+", text_lower)
+            if nums and "tắt" not in text_lower:
+                try:
+                    val = max(0, min(100, int(nums[0])))
+                except Exception:
+                    val = 100
+            speech = f"Đã {'tắt' if val==0 else 'điều chỉnh'} đèn rọi Subsea {'về 0%' if val==0 else f'lên {val}%'}."
             out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"value": val}), speech_response=speech)
             return self._evaluate_safety_and_build(out)
 
-        # 4. Telemetry Inquiry (Nhiệm vụ 3: Truy xuất Viễn trắc)
-        elif any(k in text_lower for k in ["độ sâu", "điện áp", "pin", "nhiệt độ", "thông số", "cảm biến"]):
-            speech = f"Báo cáo viễn trắc VIC: Độ sâu {depth:.2f}m, Điện áp tether {telemetry.get('voltage', 0.0):.1f}V. Các cảm biến hoạt động bình thường."
+        # 4. Telemetry Inquiry (Nhiệm vụ 3: Truy xuất Viễn trắc thời gian thực)
+        elif any(k in text_lower for k in ["pin", "dung lượng"]):
+            battery_pct = telemetry.get("battery_pct", 85)
+            voltage = telemetry.get("voltage", 16.8)
+            speech = f"Dung lượng pin ROV hiện tại còn {battery_pct}%, điện áp {voltage:.1f}V."
+            out = AgentOutputSchema(intent="query_telemetry", speech_response=speech)
+            return out, None
+
+        elif any(k in text_lower for k in ["nhiệt độ", "nhiệt"]):
+            temp = telemetry.get("internal_temp_c", telemetry.get("temp", 28.5))
+            speech = f"Nhiệt độ khoang máy hiện tại là {temp:.1f}°C."
+            out = AgentOutputSchema(intent="query_telemetry", speech_response=speech)
+            return out, None
+
+        elif any(k in text_lower for k in ["độ sâu", "mặt nước"]):
+            speech = f"Robot đang ở độ sâu {depth:.2f}m."
+            out = AgentOutputSchema(intent="query_telemetry", speech_response=speech)
+            return out, None
+
+        elif any(k in text_lower for k in ["điện áp", "volts", "vôn"]):
+            voltage = telemetry.get("voltage", 16.8)
+            speech = f"Điện áp hệ thống tether hiện tại là {voltage:.1f}V."
+            out = AgentOutputSchema(intent="query_telemetry", speech_response=speech)
+            return out, None
+
+        elif any(k in text_lower for k in ["thông số", "cảm biến", "viễn trắc"]):
+            voltage = telemetry.get("voltage", 16.8)
+            battery_pct = telemetry.get("battery_pct", 85)
+            temp = telemetry.get("internal_temp_c", 28.5)
+            speech = f"Báo cáo viễn trắc VIC: Độ sâu {depth:.2f}m, Điện áp {voltage:.1f}V, Pin {battery_pct}%, Nhiệt độ {temp:.1f}°C."
             out = AgentOutputSchema(intent="query_telemetry", speech_response=speech)
             return out, None
 
         # 5. Default Chat Response
-        speech = f"CNX VIC đã nghe rõ: '{text}'. Tớ luôn sẵn sàng hỗ trợ bạn!"
+        speech = f"CNX VIC nghe rõ: '{text}'."
         out = AgentOutputSchema(intent="chat", speech_response=speech)
         return out, None
 

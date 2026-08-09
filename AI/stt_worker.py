@@ -59,47 +59,131 @@ class STTWorker(QObject):
     def transcribe_audio(self, audio_data: np.ndarray) -> str:
         """
         Transcribe a 16kHz float32 audio numpy array.
-        Returns recognized Vietnamese text.
+        Smoothly normalizes microphone gain and transcribes using Google / Faster-Whisper.
         """
-        if audio_data is None or len(audio_data) < 1600:  # < 100ms
+        if audio_data is None or len(audio_data) < 3200:  # < 0.2s
             return ""
 
-        model = _get_whisper_model(self._model_size)
-        if model is None:
-            # Fallback mock transcription for testing without heavy model download
-            text = "bật đèn rọi 100% và kiểm tra độ sâu"
-            self.sig_transcription.emit(text, 0.95)
-            return text
+        max_val = float(np.abs(audio_data).max())
+        if max_val < 0.0005:
+            # Pure digital silence -> Discard
+            return ""
 
+        # Smooth peak audio normalization up to 0.85 max amplitude
+        if max_val < 0.85:
+            audio_data = (audio_data * (0.85 / max_val)).astype(np.float32)
+
+        # ── Method 1: Google Speech Engine (Fast, High Precision) ──────────── #
         try:
-            # Normalize audio
-            if np.abs(audio_data).max() > 0:
-                audio_data = audio_data / np.abs(audio_data).max()
+            import speech_recognition as sr
+            import io
+            import wave
 
-            segments, info = model.transcribe(
-                audio_data,
-                language=self._language,
-                beam_size=5,
-                vad_filter=True,
-            )
+            int_audio = (np.clip(audio_data, -1.0, 1.0) * 32767).astype(np.int16)
+            wav_io = io.BytesIO()
+            with wave.open(wav_io, 'wb') as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(16000)
+                wf.writeframes(int_audio.tobytes())
+            wav_io.seek(0)
 
-            # Lọc ảo giác Whisper (Discards background noise hallucinations when no_speech_prob > 0.4)
-            no_speech_prob = getattr(info, "no_speech_prob", 0.0)
-            if no_speech_prob > 0.4:
-                print(f"[STT] Ignored background noise hallucination (no_speech_prob={no_speech_prob:.2f})")
-                return ""
+            recognizer = sr.Recognizer()
+            with sr.AudioFile(wav_io) as source:
+                audio_clip = recognizer.record(source)
+
+            # Recognize with Google Search Speech Engine
+            text_google = recognizer.recognize_google(audio_clip, language="vi-VN")
+            if text_google and len(text_google.strip()) > 0:
+                print(f"[STT-Google] Transcribed vi-VN: '{text_google}'")
+                self.sig_transcription.emit(text_google, 0.99)
+                return text_google
+        except Exception as exc:
+            pass
+
+        # ── Method 2: Local Faster-Whisper Engine (100% Offline Fallback) ──── #
+        model = _get_whisper_model(self._model_size)
+        if model is not None:
+            try:
+                segments, info = model.transcribe(
+                    audio_data,
+                    language=self._language,
+                    beam_size=5,
+                    temperature=0.0,
+                    vad_filter=True,
+                    vad_parameters=dict(min_silence_duration_ms=250),
+                )
+
+                text_result = " ".join([segment.text for segment in segments]).strip()
+                confidence = info.transcription_probability if hasattr(info, 'transcription_probability') else 0.9
+
+                # Comprehensive filter for Whisper static noise hallucination phrases
+                hallucinations = [
+                    "cảm ơn các bạn", "đăng ký kênh", "subtitles by", "thank you",
+                    "cảm ơn đã theo dõi", "hẹn gặp lại", "bởi youtube", "tiếng nhạc",
+                    "tạm biệt", "hẹn gặp lại các bạn", "đăng ký", "channel", "mọi người"
+                ]
+                text_lower = text_result.lower()
+                if any(h in text_lower for h in hallucinations) and len(text_result) < 35:
+                    print(f"[STT-Whisper] Filtered static noise hallucination: '{text_result}'")
+                    return ""
+
+                if len(text_result) < 2:
+                    return ""
+
+                if text_result:
+                    print(f"[STT-Whisper Offline] Transcribed: '{text_result}' (prob={confidence:.2f})")
+                    self.sig_transcription.emit(text_result, confidence)
+                    return text_result
+
+            except Exception as exc:
+                print(f"[STT] Whisper local error: {exc}")
+
+        return ""
+
+        # ── Method 2: Google Speech Engine (Online Cloud Accelerator) ───────── #
+        try:
+            import speech_recognition as sr
+            import io
+            import wave
+
+            # Convert 16kHz float32 numpy array to 16-bit PCM WAV in RAM
+            int_audio = (np.clip(audio_data, -1.0, 1.0) * 32767).astype(np.int16)
+            wav_io = io.BytesIO()
+            with wave.open(wav_io, 'wb') as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(16000)
+                wf.writeframes(int_audio.tobytes())
+            wav_io.seek(0)
+
+            recognizer = sr.Recognizer()
+            with sr.AudioFile(wav_io) as source:
+                audio_clip = recognizer.record(source)
+
+            # Recognize with Google Search Speech Engine with 0.8s timeout
+            text_google = recognizer.recognize_google(audio_clip, language="vi-VN")
+            if text_google and len(text_google.strip()) > 0:
+                print(f"[STT-Google] Transcribed vi-VN: '{text_google}'")
+                self.sig_transcription.emit(text_google, 0.99)
+                return text_google
+        except Exception as exc:
+            pass
 
             text_result = " ".join([segment.text for segment in segments]).strip()
             confidence = info.transcription_probability if hasattr(info, 'transcription_probability') else 0.9
 
-            # Filter common Whisper hallucination phrases on silence
-            hallucinations = ["cảm ơn các bạn", "đăng ký kênh", "subtitles by", "thank you", "cảm ơn đã theo dõi", "hẹn gặp lại"]
-            if any(h in text_result.lower() for h in hallucinations) and len(text_result) < 25:
-                print(f"[STT] Filtered common silent hallucination: '{text_result}'")
+            # Filter common Whisper silent noise hallucination phrases
+            hallucinations = ["cảm ơn các bạn", "đăng ký kênh", "subtitles by", "thank you", "cảm ơn đã theo dõi", "hẹn gặp lại", "bởi youtube"]
+            if any(h in text_result.lower() for h in hallucinations) and len(text_result) < 30:
+                print(f"[STT-Whisper] Filtered common silent noise hallucination: '{text_result}'")
+                return ""
+
+            if len(text_result) < 3:
                 return ""
 
             if text_result:
-                print(f"[STT] Transcribed ({self._language}): '{text_result}' (prob={confidence:.2f})")
+                print(f"[STT-Whisper] Transcribed: '{text_result}' (prob={confidence:.2f})")
                 self.sig_transcription.emit(text_result, confidence)
                 return text_result
 
@@ -107,5 +191,7 @@ class STTWorker(QObject):
             err_msg = f"Lỗi STT: {exc}"
             print(f"[STT] {err_msg}")
             self.sig_error.emit(err_msg)
+
+        return ""
 
         return ""

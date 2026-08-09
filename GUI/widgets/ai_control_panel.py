@@ -283,6 +283,7 @@ class AIControlPanel(QWidget):
     sig_track_gain_changed  = pyqtSignal(float)
     sig_voice_command_submitted = pyqtSignal(str)
     sig_voice_agent_enabled     = pyqtSignal(bool)
+    sig_wake_word_toggled       = pyqtSignal(bool)
     sig_ptt_pressed  = pyqtSignal()
     sig_ptt_released = pyqtSignal()
 
@@ -333,6 +334,11 @@ class AIControlPanel(QWidget):
         self.chk_voice_agent.setChecked(True)
         self.chk_voice_agent.toggled.connect(self.sig_voice_agent_enabled.emit)
         lay.addWidget(self.chk_voice_agent)
+
+        self.chk_wake_word = QCheckBox("🗣  Lắng nghe 'Hey VIC' / 'VIC ơi'")
+        self.chk_wake_word.setChecked(True)
+        self.chk_wake_word.toggled.connect(self.sig_wake_word_toggled.emit)
+        lay.addWidget(self.chk_wake_word)
 
         # Push-To-Talk (PTT) Button (Chống đơ & lọc lệnh rác)
         self.btn_ptt = QPushButton("🎙  NẮM GIỮ ĐỂ NÓI (PUSH-TO-TALK)")
