@@ -759,9 +759,8 @@ class ROVMainWindow(QMainWindow):
                     print("[Main] Voice worker busy processing previous command. Suppressing concurrent buffer.")
                     return
 
-                is_ptt = getattr(self, '_ptt_active', False)
-                print(f"[Main] Captured audio speech clip ({len(pcm_audio)} samples). Dispatching to STT (is_ptt={is_ptt})...")
-                self._process_pilot_voice_command(text="", pcm_audio=pcm_audio, is_ptt=is_ptt)
+                print(f"[Main] Captured audio speech clip ({len(pcm_audio)} samples). Dispatching to STT...")
+                self._process_pilot_voice_command(text="", pcm_audio=pcm_audio, is_ptt=True)
 
             self._vad_worker.sig_speech_end.connect(_on_speech_captured)
 
@@ -834,24 +833,12 @@ class ROVMainWindow(QMainWindow):
                             self._ptt_active = True
                             self._ai_panel.lbl_mic_status.setText("Mic PTT: 🟢 ĐANG THU ÂM (NHẤN GIỮ)...")
                             self._ai_panel.lbl_mic_status.setStyleSheet("color: #00FF9D; font-weight: bold;")
-                            if self._vad_worker:
-                                self._vad_worker._is_speaking = True
-                                self._vad_worker._audio_buffer = []
 
                     def _on_ptt_released():
                         if getattr(self, '_voice_agent_enabled', True):
-                            was_active = getattr(self, '_ptt_active', False)
                             self._ptt_active = False
                             self._ai_panel.lbl_mic_status.setText("Mic PTT: 🔒 MUTED (NHẤN NÚT ĐỂ NÓI)")
                             self._ai_panel.lbl_mic_status.setStyleSheet("color: #94A9C4;")
-                            if was_active and self._vad_worker:
-                                self._vad_worker._is_speaking = False
-                                buf = getattr(self._vad_worker, '_audio_buffer', [])
-                                self._vad_worker._audio_buffer = []
-                                if buf and len(buf) > 0:
-                                    import numpy as np
-                                    full_audio = np.concatenate(buf)
-                                    self._process_pilot_voice_command(text="", pcm_audio=full_audio)
 
                     self._ai_panel.sig_ptt_pressed.connect(_on_ptt_pressed)
                     self._ai_panel.sig_ptt_released.connect(_on_ptt_released)

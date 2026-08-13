@@ -164,11 +164,11 @@ class ROVAgentBrain:
         return has_wake, command
 
     def process_pilot_input(
-        self, text: str, telemetry_context: Dict[str, Any], is_ptt: bool = False
+        self, text: str, telemetry_context: Dict[str, Any], is_ptt: bool = True
     ) -> Tuple[Optional[AgentOutputSchema], Optional[Dict]]:
         """
         Process pilot voice text input.
-        Enforces Wake Word requirement when in continuous background mode (is_ptt=False).
+        Strips optional Wake Word prefix ("Hey VIC", "VIC ơi") if present, and executes command.
         """
         text_clean = text.strip()
         if not text_clean:
@@ -176,19 +176,13 @@ class ROVAgentBrain:
 
         has_wake, command_text = self.extract_wake_word(text_clean)
 
-        if not is_ptt:
-            if not has_wake:
-                # Discard background TV noise ("xôi lạc TV", "được", "à", "ừ") silently!
-                return None, None
-            if not command_text:
-                # User just called the assistant name ("Hey VIC" / "VIC ơi")
-                speech = "CNX VIC nghe đây! Bạn cần hỗ trợ gì?"
-                out = AgentOutputSchema(intent="chat", speech_response=speech)
-                return out, None
+        if command_text:
             text_clean = command_text
-        else:
-            if command_text:
-                text_clean = command_text
+        elif has_wake and not command_text:
+            # User just called the assistant name ("Hey VIC" / "VIC ơi")
+            speech = "CNX VIC nghe đây! Bạn cần hỗ trợ gì?"
+            out = AgentOutputSchema(intent="chat", speech_response=speech)
+            return out, None
 
         # Step 1: Check if pilot is replying to a PENDING SAFETY CONFIRMATION
         if self.safety_guard.has_pending_confirmation():
