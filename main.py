@@ -2201,8 +2201,39 @@ def main():
         with open(qss_path, 'r', encoding='utf-8') as f:
             app.setStyleSheet(f.read())
 
+    # Launch Autodesk Fusion 360 Style Splash Screen
+    from GUI.widgets.splash_screen import FusionSplashScreen
+    splash = FusionSplashScreen(
+        app_title="CNX GCS ROV PRO",
+        app_subtitle="Commercial Subsea Inspection & AI Co-Pilot Platform",
+        version_text="v3.8.5 Enterprise"
+    )
+    splash.show()
+    app.processEvents()
+
+    # Step 1: MAVLink & Protocol Stack
+    splash.set_progress(20, "Initializing MAVLink Protocol Engine & SLAM Receiver...")
+    time.sleep(0.3)
+
+    # Step 2: SQLite Telemetry WAL Engine
+    splash.set_progress(45, "Loading SQLite Telemetry Database & WAL Loggers...")
+    time.sleep(0.3)
+
+    # Step 3: Instantiate ROVMainWindow
+    splash.set_progress(65, "Initializing OpenGL 3D Motion Models & Subsea Canvas...")
     window = ROVMainWindow(settings)
     window.setWindowTitle("CNC NExora — ROV CONTROL SYSTEM")
+
+    # Step 4: AI & Voice Agent
+    splash.set_progress(85, "Spinning up Voice Agent Co-Pilot VIC & YOLOv8 Detectors...")
+    time.sleep(0.3)
+
+    # Step 5: Ready
+    splash.set_progress(100, "Ready! Launching GCS Subsea Control Station...")
+    time.sleep(0.2)
+
+    # Smooth Fade Out Splash & Show Main Window
+    splash.fade_out(duration_ms=450)
     window.showMaximized()  # Tự động mở 100% toàn màn hình
 
     sys.exit(app.exec())
