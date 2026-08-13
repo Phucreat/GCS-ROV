@@ -268,117 +268,119 @@ class ROVAgentBrain:
 
         return out, None
 
+    def set_language(self, lang_code: str) -> None:
+        """Dynamically set Agent persona response language ('vi', 'en', 'ja', 'zh', etc.)."""
+        self._language = lang_code.lower()
+        print(f"[AgentBrain] Persona language updated to: '{self._language}'")
+
     def _rule_based_fallback(
         self, text: str, telemetry: Dict[str, Any]
     ) -> Tuple[AgentOutputSchema, Optional[Dict]]:
         """High-speed offline keyword parser for voice commands & SOP RAG."""
-        # Phonetic Vietnamese Normalization for noisy speech recognition
         text_lower = (
             text.lower()
             .replace("bậc", "bật").replace("đền", "đèn").replace("đen", "đèn")
             .replace("tắc", "tắt").replace("gát", "ngắt").replace("gắt", "ngắt")
         )
         depth = telemetry.get("depth", 0.0)
+        lang = getattr(self, "_language", "vi")
 
-        # 0. Agent Identity & Friendly Morale Chat (Nhiệm vụ 1: Tâm sự & Trò chuyện)
-        if any(k in text_lower for k in ["tên gì", "tên là gì", "bạn là ai", "ai đây", "who are you", "giới thiệu"]):
-            speech = "Tôi là CNX VIC, trợ lý ảo AI chuyên nghiệp hỗ trợ vận hành robot lặn ngầm."
+        # 0. Agent Identity & Friendly Morale Chat
+        if any(k in text_lower for k in ["tên gì", "tên là gì", "bạn là ai", "ai đây", "who are you", "who r u", "introduce", "giới thiệu"]):
+            speech = "I am CNX VIC, professional AI Co-Pilot supporting ROV subsea operations." if lang == "en" else "Tôi là CNX VIC, trợ lý ảo AI chuyên nghiệp hỗ trợ vận hành robot lặn ngầm."
             out = AgentOutputSchema(intent="chat", speech_response=speech)
             return out, None
 
-        elif any(k in text_lower for k in ["sóng to", "rợn tóc gáy", "sợ quá", "biển xấu"]):
-            speech = f"Sóng lớn không làm khó được CNX VIC đâu! Hệ thống đang giữ độ sâu {depth:.1f}m rất ổn định."
+        elif any(k in text_lower for k in ["sóng to", "rợn tóc gáy", "sợ quá", "biển xấu", "rough sea", "heavy waves"]):
+            speech = f"Heavy waves can't stop CNX VIC! System depth is stable at {depth:.1f}m." if lang == "en" else f"Sóng lớn không làm khó được CNX VIC đâu! Hệ thống đang giữ độ sâu {depth:.1f}m rất ổn định."
             out = AgentOutputSchema(intent="chat", speech_response=speech)
             return out, None
 
-        elif any(k in text_lower for k in ["mệt quá", "căng thẳng", "đuối quá"]):
-            speech = "Bạn nghỉ tay một chút nhé, CNX VIC đang giám sát toàn bộ hệ thống."
+        elif any(k in text_lower for k in ["mệt quá", "căng thẳng", "đuối quá", "tired", "exhausted"]):
+            speech = "Take a short break, CNX VIC is monitoring all ROV subsystems." if lang == "en" else "Bạn nghỉ tay một chút nhé, CNX VIC đang giám sát toàn bộ hệ thống."
             out = AgentOutputSchema(intent="chat", speech_response=speech)
             return out, None
 
-        # 1. Ý Định Ngầm & Điều Khiển Trực Tiếp (Nhiệm vụ 2)
-        # Ý định ngầm: "Tối quá", "Không thấy gì", "Tối thui" -> Tăng đèn rọi 100%
-        if any(k in text_lower for k in ["tối quá", "tối thui", "không nhìn thấy", "chẳng nhìn rõ", "tối"]):
+        # 1. Direct Control & Implicit Intents
+        # Dark room / Spotlight 100%
+        if any(k in text_lower for k in ["tối quá", "tối thui", "không nhìn thấy", "chẳng nhìn rõ", "too dark", "cannot see", "darkness"]):
             action = "set_lights"
-            speech = "Đã tăng đèn rọi Subsea lên 100% độ sáng."
+            speech = "Subsea spotlight intensity set to 100%." if lang == "en" else "Đã tăng đèn rọi Subsea lên 100% độ sáng."
             out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"value": 100}), speech_response=speech)
             return self._evaluate_safety_and_build(out)
 
-        # Chụp ảnh / Lưu khung hình
-        elif any(k in text_lower for k in ["chụp ảnh", "chụp hình", "lưu ảnh", "snapshot"]):
+        # Snapshot
+        elif any(k in text_lower for k in ["chụp ảnh", "chụp hình", "lưu ảnh", "snapshot", "take photo", "capture", "camera"]):
             action = "take_snapshot"
-            speech = "Đã chụp và lưu ảnh vào thư mục media thành công."
+            speech = "Snapshot captured and saved to media folder." if lang == "en" else "Đã chụp và lưu ảnh vào thư mục media thành công."
             out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action), speech_response=speech)
             return self._evaluate_safety_and_build(out)
 
-        # 2. SOP RAG Search (Nhiệm vụ 4: Quy trình & Hướng dẫn GCS)
-        elif "quy trình" in text_lower or "hướng dẫn" in text_lower or "sop" in text_lower or "cách dùng" in text_lower:
+        # 2. SOP RAG Search
+        elif any(k in text_lower for k in ["quy trình", "hướng dẫn", "sop", "cách dùng", "procedure", "manual", "instruction"]):
             sop_text = self._search_sop(text_lower)
             out = AgentOutputSchema(intent="query_sop", tool_call=AgentToolCall(action="read_sop"), speech_response=sop_text)
             return out, None
 
         # 3. Critical ARM / DISARM / Emergency Command
-        elif "khởi động động cơ" in text_lower or "arm động cơ" in text_lower:
+        elif any(k in text_lower for k in ["khởi động động cơ", "arm động cơ", "arm thrusters", "start motors"]):
             action = "arm_thrusters"
-            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action), speech_response="")
+            speech = "Arming thrusters." if lang == "en" else "Đang khởi động động cơ."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action), speech_response=speech)
             return self._evaluate_safety_and_build(out)
 
-        elif "ngắt động cơ" in text_lower or "tắt động cơ" in text_lower or "khẩn cấp" in text_lower:
+        elif any(k in text_lower for k in ["ngắt động cơ", "tắt động cơ", "khẩn cấp", "emergency stop", "disarm", "stop thrusters"]):
             action = "emergency_stop"
-            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action), speech_response="")
+            speech = "EMERGENCY STOP requested." if lang == "en" else "Yêu cầu DỪNG KHẨN CẤP."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action), speech_response=speech)
             return self._evaluate_safety_and_build(out)
 
-        # Lệnh Đèn Rọi Trực Tiếp
-        elif "bật đèn" in text_lower or "tắt đèn" in text_lower or "đèn rọi" in text_lower or "đèn" in text_lower:
+        # Spotlight Controls
+        elif any(k in text_lower for k in ["bật đèn", "tắt đèn", "đèn rọi", "đèn", "light", "lights", "spotlight"]):
             action = "set_lights"
-            val = 0 if "tắt" in text_lower else 100
+            val = 0 if any(k in text_lower for k in ["tắt", "off", "turn off", "disable"]) else 100
             import re
             nums = re.findall(r"\d+", text_lower)
-            if nums and "tắt" not in text_lower:
+            if nums and not any(k in text_lower for k in ["tắt", "off"]):
                 try:
                     val = max(0, min(100, int(nums[0])))
                 except Exception:
                     val = 100
-            speech = f"Đã {'tắt' if val==0 else 'điều chỉnh'} đèn rọi Subsea {'về 0%' if val==0 else f'lên {val}%'}."
+            if lang == "en":
+                speech = f"Subsea spotlight {'turned off' if val==0 else f'adjusted to {val}%'}."
+            else:
+                speech = f"Đã {'tắt' if val==0 else 'điều chỉnh'} đèn rọi Subsea {'về 0%' if val==0 else f'lên {val}%'}."
             out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"value": val}), speech_response=speech)
             return self._evaluate_safety_and_build(out)
 
-        # 4. Telemetry Inquiry (Nhiệm vụ 3: Truy xuất Viễn trắc thời gian thực)
-        elif any(k in text_lower for k in ["pin", "dung lượng"]):
+        # 4. Telemetry Inquiry
+        elif any(k in text_lower for k in ["pin", "dung lượng", "battery", "voltage", "power"]):
             battery_pct = telemetry.get("battery_pct", 85)
             voltage = telemetry.get("voltage", 16.8)
-            speech = f"Dung lượng pin ROV hiện tại còn {battery_pct}%, điện áp {voltage:.1f}V."
-            out = AgentOutputSchema(intent="query_telemetry", speech_response=speech)
+            if lang == "en":
+                speech = f"Current battery level is {battery_pct}% at {voltage:.1f} volts."
+            else:
+                speech = f"Dung lượng pin ROV hiện tại còn {battery_pct}%, điện áp {voltage:.1f}V."
+            out = AgentOutputSchema(intent="telemetry_query", speech_response=speech)
             return out, None
 
-        elif any(k in text_lower for k in ["nhiệt độ", "nhiệt"]):
-            temp = telemetry.get("internal_temp_c", telemetry.get("temp", 28.5))
-            speech = f"Nhiệt độ khoang máy hiện tại là {temp:.1f}°C."
-            out = AgentOutputSchema(intent="query_telemetry", speech_response=speech)
+        elif any(k in text_lower for k in ["độ sâu", "sâu bao nhiêu", "depth", "deep"]):
+            speech = f"ROV is currently operating at depth {depth:.1f} meters." if lang == "en" else f"Độ sâu làm việc hiện tại của ROV là {depth:.1f} mét."
+            out = AgentOutputSchema(intent="telemetry_query", speech_response=speech)
             return out, None
 
-        elif any(k in text_lower for k in ["độ sâu", "mặt nước"]):
-            speech = f"Robot đang ở độ sâu {depth:.2f}m."
-            out = AgentOutputSchema(intent="query_telemetry", speech_response=speech)
+        elif any(k in text_lower for k in ["nhiệt độ", "nhiệt", "temp", "temperature"]):
+            temp_c = telemetry.get("temp", 28.5)
+            speech = f"Internal electronics temperature is {temp_c:.1f} degrees Celsius." if lang == "en" else f"Nhiệt độ khoang máy hiện tại là {temp_c:.1f} độ C."
+            out = AgentOutputSchema(intent="telemetry_query", speech_response=speech)
             return out, None
 
-        elif any(k in text_lower for k in ["điện áp", "volts", "vôn"]):
-            voltage = telemetry.get("voltage", 16.8)
-            speech = f"Điện áp hệ thống tether hiện tại là {voltage:.1f}V."
-            out = AgentOutputSchema(intent="query_telemetry", speech_response=speech)
-            return out, None
-
-        elif any(k in text_lower for k in ["thông số", "cảm biến", "viễn trắc"]):
-            voltage = telemetry.get("voltage", 16.8)
-            battery_pct = telemetry.get("battery_pct", 85)
-            temp = telemetry.get("internal_temp_c", 28.5)
-            speech = f"Báo cáo viễn trắc VIC: Độ sâu {depth:.2f}m, Điện áp {voltage:.1f}V, Pin {battery_pct}%, Nhiệt độ {temp:.1f}°C."
-            out = AgentOutputSchema(intent="query_telemetry", speech_response=speech)
-            return out, None
-
-        # 5. Default Chat Response
-        speech = f"CNX VIC nghe rõ: '{text}'."
-        out = AgentOutputSchema(intent="chat", speech_response=speech)
+        # Generic Response
+        if lang == "en":
+            speech = f"Received command: '{text}'. Processing pilot request."
+        else:
+            speech = f"Đã nhận lệnh: '{text}'. Đang xử lý yêu cầu của bạn."
+        out = AgentOutputSchema(intent="general", speech_response=speech)
         return out, None
 
     def _search_sop(self, query: str) -> str:

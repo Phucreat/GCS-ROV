@@ -750,10 +750,28 @@ class ROVMainWindow(QMainWindow):
             self._ptt_active = False
             self._wake_word_enabled = True
             self._is_processing_voice = False
+            self._is_tts_speaking = False
+
+            # Connect TTS speech started/finished signals to mute mic during TTS audio playback!
+            def _on_tts_speech_start(text):
+                self._is_tts_speaking = True
+                print(f"[Main] TTS audio playback started. Mic capture muted.")
+
+            def _on_tts_speech_finish():
+                def _unmute():
+                    self._is_tts_speaking = False
+                    print(f"[Main] TTS audio playback finished. Mic capture unmuted.")
+                QtCore.QTimer.singleShot(300, _unmute)
+
+            self._tts_worker.sig_speech_started.connect(_on_tts_speech_start)
+            self._tts_worker.sig_speech_finished.connect(_on_tts_speech_finish)
 
             # Connect VAD speech end -> Async STT & Agent Brain Worker
             def _on_speech_captured(pcm_audio):
                 if pcm_audio is None or len(pcm_audio) < 2400:
+                    return
+                if getattr(self, '_is_tts_speaking', False):
+                    print("[Main] Suppressing mic capture while VIC is speaking to prevent speaker echo feedback.")
                     return
                 if getattr(self, '_is_processing_voice', False):
                     print("[Main] Voice worker busy processing previous command. Suppressing concurrent buffer.")
@@ -789,6 +807,23 @@ class ROVMainWindow(QMainWindow):
                         status_str = "🟢 Lắng nghe 'Hey VIC' / 'VIC ơi'" if enabled else "🔒 MUTED (NHẤN NÚT ĐỂ NÓI)"
                         self._ai_panel.lbl_mic_status.setText(f"Mic VAD: {status_str}")
                     self._ai_panel.sig_wake_word_toggled.connect(_on_wake_word_toggle)
+
+                if hasattr(self._ai_panel, 'sig_language_changed'):
+                    def _on_language_changed(lang_code: str):
+                        print(f"[Main] Switching Voice Agent language to: '{lang_code}'")
+                        if self._tts_worker and hasattr(self._tts_worker, 'set_language'):
+                            self._tts_worker.set_language(lang_code)
+                        if self._stt_worker and hasattr(self._stt_worker, 'set_language'):
+                            self._stt_worker.set_language(lang_code)
+                        if self._agent_brain and hasattr(self._agent_brain, 'set_language'):
+                            self._agent_brain.set_language(lang_code)
+
+                        lang_name = "Tiếng Việt 🇻🇳" if lang_code == "vi" else "English 🇺🇸" if lang_code == "en" else lang_code.upper()
+                        self._ai_panel.lbl_agent_speech.setText(f"Agent: Ready ({lang_name})")
+
+                    self._ai_panel.sig_language_changed.connect(_on_language_changed)
+                    # Enforce default: Tiếng Việt ("vi")
+                    _on_language_changed("vi")
 
                 # Connect UI Safety confirmation buttons, Text command input & Push-To-Talk
                 self._ai_panel.btn_confirm_action.clicked.connect(lambda: self._process_pilot_voice_command("Xác nhận"))

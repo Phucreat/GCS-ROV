@@ -284,6 +284,7 @@ class AIControlPanel(QWidget):
     sig_voice_command_submitted = pyqtSignal(str)
     sig_voice_agent_enabled     = pyqtSignal(bool)
     sig_wake_word_toggled       = pyqtSignal(bool)
+    sig_language_changed        = pyqtSignal(str)
     sig_ptt_pressed  = pyqtSignal()
     sig_ptt_released = pyqtSignal()
 
@@ -334,6 +335,27 @@ class AIControlPanel(QWidget):
         self.chk_voice_agent.setChecked(True)
         self.chk_voice_agent.toggled.connect(self.sig_voice_agent_enabled.emit)
         lay.addWidget(self.chk_voice_agent)
+
+        # Multi-Language Selector Dropdown (Default: Tiếng Việt 🇻🇳)
+        lang_row = QHBoxLayout()
+        lang_row.addWidget(_make_label("🌐 Ngôn ngữ Agent:"))
+        self.cmb_language = QComboBox()
+        self.cmb_language.addItem("🇻🇳 Tiếng Việt (Vietnamese)", "vi")
+        self.cmb_language.addItem("🇺🇸 English (US)", "en")
+        self.cmb_language.addItem("🇯🇵 Japanese (日本語)", "ja")
+        self.cmb_language.addItem("🇨🇳 Chinese (中文)", "zh")
+        self.cmb_language.addItem("🇰🇷 Korean (한국어)", "ko")
+        self.cmb_language.addItem("🇫🇷 French (Français)", "fr")
+        self.cmb_language.addItem("🇩🇪 German (Deutsch)", "de")
+        self.cmb_language.addItem("🇪🇸 Spanish (Español)", "es")
+        self.cmb_language.addItem("🇷🇺 Russian (Русский)", "ru")
+        self.cmb_language.setCurrentIndex(0)  # Default: Tiếng Việt
+        lang_row.addWidget(self.cmb_language, stretch=1)
+        lay.addLayout(lang_row)
+
+        self.cmb_language.currentIndexChanged.connect(
+            lambda: self.sig_language_changed.emit(self.cmb_language.currentData())
+        )
 
         self.chk_wake_word = QCheckBox("🗣  Lắng nghe 'Hey VIC' / 'VIC ơi'")
         self.chk_wake_word.setChecked(True)

@@ -42,6 +42,19 @@ def _get_pyttsx3_engine():
     return _engine if _engine is not False else None
 
 
+_NEURAL_VOICE_MAP = {
+    "vi": "vi-VN-HoaiMyNeural",
+    "en": "en-US-AriaNeural",
+    "ja": "ja-JP-NanamiNeural",
+    "zh": "zh-CN-XiaoxiaoNeural",
+    "ko": "ko-KR-SunHiNeural",
+    "fr": "fr-FR-DeniseNeural",
+    "de": "de-DE-KatjaNeural",
+    "es": "es-ES-ElviraNeural",
+    "ru": "ru-RU-SvetlanaNeural",
+}
+
+
 class TTSWorker(QThread):
     """
     Background worker thread for offline Text-to-Speech audio synthesis.
@@ -62,19 +75,25 @@ class TTSWorker(QThread):
         self._piper_path = piper_path
         self._model_path = model_path
         self._running = False
+        self._language = "vi"  # Default: Tiếng Việt 🇻🇳
         self._speech_queue: queue.Queue = queue.Queue()
 
+    def set_language(self, lang_code: str) -> None:
+        """Dynamically switch TTS voice language (e.g. 'vi', 'en', 'ja', 'zh')."""
+        self._language = lang_code.lower()
+        print(f"[TTSWorker] Switched voice language to: '{self._language}'")
+
     def speak(self, text: str, is_emergency: bool = False) -> None:
-        """Queue text to be spoken. Emergency audio clears the queue instantly."""
+        """Queue text to be spoken. Always clear outdated queue first for 0ms lag!"""
         if not text.strip():
             return
-        if is_emergency:
-            # Clear pending queue for immediate emergency announcement
-            while not self._speech_queue.empty():
-                try:
-                    self._speech_queue.get_nowait()
-                except queue.Empty:
-                    break
+
+        # Always clear pending queue to prevent outdated sentences from building up lag!
+        while not self._speech_queue.empty():
+            try:
+                self._speech_queue.get_nowait()
+            except Exception:
+                break
 
         self._speech_queue.put((text.strip(), is_emergency))
 
@@ -87,6 +106,12 @@ class TTSWorker(QThread):
     def run(self) -> None:
         self._running = True
         print("[TTSWorker] Text-to-Speech audio synthesizer started.")
+
+        try:
+            import pythoncom
+            pythoncom.CoInitialize()
+        except Exception:
+            pass
 
         while self._running:
             try:
@@ -103,38 +128,71 @@ class TTSWorker(QThread):
                 print(f"[TTSWorker] Error in TTS synthesis: {exc}")
 
     def _synthesize_and_play(self, text: str, is_emergency: bool) -> None:
-        """Synthesize text using Neural Vietnamese TTS (edge-tts), Piper, or Pyttsx3 fallback."""
+        """Synthesize text using Fast Offline System SAPI5, Neural TTS, or Piper."""
         if not text.strip():
             return
 
-        print(f"[TTSWorker] Synthesizing speech ({'EMERGENCY' if is_emergency else 'NORMAL'}): '{text}'")
+        lang = getattr(self, "_language", "vi")
+        print(f"[TTSWorker] Synthesizing speech ({lang.upper()} | {'EMERGENCY' if is_emergency else 'NORMAL'}): '{text}'")
 
-        # Method 1: Edge TTS Neural Vietnamese Voice (Giọng tiếng Việt chuẩn 100% vi-VN-HoaiMyNeural)
+        # ── Method 1: Pyttsx3 / Windows Native SAPI5 Engine (0ms Latency, 100% Offline) ── #
         try:
-            import asyncio
-            import edge_tts
-            import hashlib
+            import pyttsx3
+            engine = pyttsx3.init()
+            engine.setProperty("rate", 175)
+            engine.setProperty("volume", 1.0)
 
-            # Local disk cache to guarantee 100% offline playback once cached
-            hash_name = hashlib.md5(text.encode("utf-8")).hexdigest()
+            # Match voice strictly by target language (prevent 'vi' substring matching 'daVId')
+            voices = engine.getProperty("voices")
+            matched_voice_id = None
+            for v in voices:
+                v_name = v.name.lower()
+                v_langs = [str(l).lower() for l in getattr(v, "languages", [])]
+
+                if lang == "vi":
+                    if "vietnam" in v_name or "vietnamese" in v_name or "hoaimy" in v_name or "namminh" in v_name or any("vi" in l for l in v_langs):
+                        matched_voice_id = v.id
+                        break
+                elif lang == "en":
+                    if "english" in v_name or "zira" in v_name or "david" in v_name or "hazel" in v_name or any("en" in l for l in v_langs):
+                        matched_voice_id = v.id
+                        break
+                elif lang == v_name or any(lang == l for l in v_langs):
+                    matched_voice_id = v.id
+                    break
+
+            if matched_voice_id:
+                engine.setProperty("voice", matched_voice_id)
+                engine.say(text)
+                engine.runAndWait()
+                return
+        except Exception as exc:
+            print(f"[TTSWorker] Pyttsx3 SAPI5 speech error: {exc}")
+
+        # ── Method 2: Local Disk Cache / Edge TTS ── #
+        try:
+            import hashlib
+            target_voice = _NEURAL_VOICE_MAP.get(lang, "vi-VN-HoaiMyNeural")
+            hash_name = hashlib.md5(f"{target_voice}_{text}".encode("utf-8")).hexdigest()
             cache_dir = os.path.join("scratch", "tts_cache")
             os.makedirs(cache_dir, exist_ok=True)
             cached_mp3 = os.path.join(cache_dir, f"{hash_name}.mp3")
 
             if not os.path.exists(cached_mp3):
+                import asyncio
+                import edge_tts
                 async def _gen():
-                    communicate = edge_tts.Communicate(text, "vi-VN-HoaiMyNeural")
+                    communicate = edge_tts.Communicate(text, target_voice)
                     await communicate.save(cached_mp3)
                 asyncio.run(_gen())
 
             if os.path.exists(cached_mp3):
                 self._play_audio_file(cached_mp3)
                 return
-
         except Exception as exc:
-            print(f"[TTSWorker] Edge TTS fallback triggered ({exc}).")
+            print(f"[TTSWorker] Edge TTS speech error: {exc}")
 
-        # Method 2: Piper TTS C++ Engine (Low latency < 50ms)
+        # Method 3: Piper TTS C++ Engine (Low latency < 50ms)
         if os.path.exists(self._piper_path) and os.path.exists(self._model_path):
             try:
                 out_wav = "scratch/temp_tts.wav"
@@ -151,21 +209,6 @@ class TTSWorker(QThread):
                     return
             except Exception as e:
                 print(f"[TTSWorker] Piper TTS error ({e})...")
-
-        # Method 3: Pyttsx3 / System SAPI5 Fallback
-        engine = _get_pyttsx3_engine()
-        if engine is not None:
-            try:
-                # Try setting a Vietnamese or non-English voice if available
-                voices = engine.getProperty("voices")
-                for v in voices:
-                    if "vietnamese" in v.name.lower() or "vi" in str(v.languages).lower():
-                        engine.setProperty("voice", v.id)
-                        break
-                engine.say(text)
-                engine.runAndWait()
-            except Exception as exc:
-                print(f"[TTSWorker] Pyttsx3 speech error: {exc}")
 
     def _play_audio_file(self, audio_path: str) -> None:
         """Play WAV or MP3 audio file cleanly via pygame audio or winsound."""

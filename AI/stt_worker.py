@@ -56,6 +56,11 @@ class STTWorker(QObject):
         self._model_size = model_size
         self._language = language
 
+    def set_language(self, lang_code: str) -> None:
+        """Dynamically set STT language code (e.g. 'vi', 'en', 'ja', 'zh')."""
+        self._language = lang_code.lower()
+        print(f"[STTWorker] Switched recognition language to: '{self._language}'")
+
     def transcribe_audio(self, audio_data: np.ndarray) -> str:
         """
         Transcribe a 16kHz float32 audio numpy array.
@@ -93,12 +98,17 @@ class STTWorker(QObject):
                 audio_clip = recognizer.record(source)
 
             # Recognize with Google Search Speech Engine
-            text_google = recognizer.recognize_google(audio_clip, language="vi-VN")
+            stt_lang = {
+                "vi": "vi-VN", "en": "en-US", "ja": "ja-JP", "zh": "zh-CN",
+                "ko": "ko-KR", "fr": "fr-FR", "de": "de-DE", "es": "es-ES", "ru": "ru-RU"
+            }.get(getattr(self, "_language", "vi"), "vi-VN")
+
+            text_google = recognizer.recognize_google(audio_clip, language=stt_lang)
             if text_google and len(text_google.strip()) > 0:
-                print(f"[STT-Google] Transcribed vi-VN: '{text_google}'")
+                print(f"[STT-Google] Transcribed ({stt_lang}): '{text_google}'")
                 self.sig_transcription.emit(text_google, 0.99)
                 return text_google
-        except Exception as exc:
+        except Exception:
             pass
 
         # ── Method 2: Local Faster-Whisper Engine (100% Offline Fallback) ──── #
