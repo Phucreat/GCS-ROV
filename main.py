@@ -19,13 +19,14 @@ Cách chạy:
   python main.py --connection udp:0.0.0.0:14550
   python main.py --mock          (chế độ mô phỏng offline)
 """
-import os
 from GUI.widgets.settings_dialog import SettingsDialog
 from network.slam_udp_receiver import SLAMUDPReceiver
 from network.mavlink_worker import MAVLinkWorker
 from GUI.widgets.power_widget import PowerWidget
 from GUI.widgets.gl_compass_3d_widget import GLCompass3DWidget
 from GUI.widgets.gl_3d_widget import GLROVWidget
+from GUI.widgets.blueos_manager import BlueOSManagerWindow
+from database import DatabaseManager, AsyncTelemetryLogger, ReportExporter
 from core.physics_engine import PhysicsEngine
 from core.models.rov_3thruster import ROV3ThrusterModel
 from core.models.rov_6thruster import ROV6ThrusterModel
@@ -35,7 +36,7 @@ import math
 import time
 import argparse
 import numpy as np
-
+import os
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import (
@@ -272,6 +273,15 @@ class ROVMainWindow(QMainWindow):
         self._video_writer:   object = None   # cv2.VideoWriter
         self._last_frame:     object = None   # np.ndarray, cập nhật mỗi frame
 
+        # ── SQLite Database & High-Frequency Telemetry Black Box Logger ──
+        self.db = DatabaseManager()
+        self.active_session_id = self.db.create_dive_session(
+            pilot_name="Pilot Operator",
+            location_name=self.settings.get("location_name", "Offshore Subsea Facility")
+        )
+        self.telemetry_logger = AsyncTelemetryLogger(db_manager=self.db)
+        self.telemetry_logger.start(session_id=self.active_session_id)
+
         # --- Thay thế placeholder widgets ---
         self._inject_3d_widget()
         self._inject_power_widget()
@@ -410,20 +420,43 @@ class ROVMainWindow(QMainWindow):
             self._mission_planner.sig_preview_waypoint.connect(
                 lambda x, y, z: self.gl_3d.update_trajectory(x, y, z)
             )
-            # Thêm nút mở Mission Planner vào toolbar (nếu có)
-            if hasattr(self.ui, 'setup_systeam'):
-                btn_mp = QtWidgets.QPushButton("📍 Mission", self)
-                btn_mp.setStyleSheet(
-                    "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #142338,stop:1 #0C1827);"
-                    "color:#00D4FF;border:1px solid #1D3554;border-radius:6px;padding:4px 10px;font-weight:bold;font-size:11px;}"
-                    "QPushButton:hover{background:#00A8FF;color:#FFFFFF;border-color:#00F0FF;}"
-                )
-                btn_mp.clicked.connect(self._mission_planner.show)
-                # Chèn vào layout header nếu có
-                hdr_layout = self.ui.setup_systeam.parentWidget().layout()
-                if hdr_layout:
-                    idx = hdr_layout.indexOf(self.ui.setup_systeam)
-                    hdr_layout.insertWidget(idx, btn_mp)
+        # ── Feature: BlueOS Embedded Manager Window ──────────
+        self._blueos_window = None
+
+        def _show_blueos_manager():
+            blueos_ip = self.settings.get("blueos_ip", "192.168.2.2")
+            if self._blueos_window is None:
+                self._blueos_window = BlueOSManagerWindow(default_ip=blueos_ip, parent=None)
+            self._blueos_window.show()
+            self._blueos_window.raise_()
+            self._blueos_window.activateWindow()
+
+        self._show_blueos_manager = _show_blueos_manager
+
+        # Thêm nút mở Mission Planner và BlueOS vào toolbar (nếu có)
+        if hasattr(self.ui, 'setup_systeam'):
+            btn_mp = QtWidgets.QPushButton("📍 Mission", self)
+            btn_mp.setStyleSheet(
+                "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #142338,stop:1 #0C1827);"
+                "color:#00D4FF;border:1px solid #1D3554;border-radius:6px;padding:4px 10px;font-weight:bold;font-size:11px;}"
+                "QPushButton:hover{background:#00A8FF;color:#FFFFFF;border-color:#00F0FF;}"
+            )
+            btn_mp.clicked.connect(self._mission_planner.show)
+
+            btn_blueos = QtWidgets.QPushButton("🌐 BlueOS", self)
+            btn_blueos.setStyleSheet(
+                "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #142338,stop:1 #0C1827);"
+                "color:#00FF9D;border:1px solid #1D3554;border-radius:6px;padding:4px 10px;font-weight:bold;font-size:11px;}"
+                "QPushButton:hover{background:#00A8FF;color:#FFFFFF;border-color:#00F0FF;}"
+            )
+            btn_blueos.clicked.connect(_show_blueos_manager)
+
+            # Chèn vào layout header nếu có
+            hdr_layout = self.ui.setup_systeam.parentWidget().layout()
+            if hdr_layout:
+                idx = hdr_layout.indexOf(self.ui.setup_systeam)
+                hdr_layout.insertWidget(idx, btn_mp)
+                hdr_layout.insertWidget(idx, btn_blueos)
 
         # ── Feature 1 & 2: Video Receiver + AR HUD + AI ──────────
         if HAS_VIDEO:
@@ -716,13 +749,19 @@ class ROVMainWindow(QMainWindow):
 
             self._ptt_active = False
             self._wake_word_enabled = True
+            self._is_processing_voice = False
 
             # Connect VAD speech end -> Async STT & Agent Brain Worker
             def _on_speech_captured(pcm_audio):
                 if pcm_audio is None or len(pcm_audio) < 2400:
                     return
-                print(f"[Main] Captured audio speech clip ({len(pcm_audio)} samples). Dispatching to STT...")
-                self._process_pilot_voice_command(text="", pcm_audio=pcm_audio, is_ptt=True)
+                if getattr(self, '_is_processing_voice', False):
+                    print("[Main] Voice worker busy processing previous command. Suppressing concurrent buffer.")
+                    return
+
+                is_ptt = getattr(self, '_ptt_active', False)
+                print(f"[Main] Captured audio speech clip ({len(pcm_audio)} samples). Dispatching to STT (is_ptt={is_ptt})...")
+                self._process_pilot_voice_command(text="", pcm_audio=pcm_audio, is_ptt=is_ptt)
 
             self._vad_worker.sig_speech_end.connect(_on_speech_captured)
 
@@ -853,6 +892,8 @@ class ROVMainWindow(QMainWindow):
             print("[Main] Voice Agent is disabled. Ignoring input.")
             return
 
+        self._is_processing_voice = True
+
         voltage = float(getattr(self, '_voltage', 16.8))
         if voltage >= 14.0 and voltage <= 16.8:
             battery_pct = max(0, min(100, int((voltage - 14.0) / 2.8 * 100)))
@@ -882,39 +923,42 @@ class ROVMainWindow(QMainWindow):
         worker = AgentAsyncWorker(self._agent_brain, text, pcm_audio, self._stt_worker, telemetry, is_ptt=is_ptt, parent=self)
 
         def _on_async_completed(output, immediate_action, cmd_text):
-            # Check if voice agent was disabled while worker was processing in background
-            if hasattr(self, '_voice_agent_enabled') and not self._voice_agent_enabled:
-                print("[Main] Async worker completed but Voice Agent is disabled. Suppressing response.")
-                return
+            try:
+                # Check if voice agent was disabled while worker was processing in background
+                if hasattr(self, '_voice_agent_enabled') and not self._voice_agent_enabled:
+                    print("[Main] Async worker completed but Voice Agent is disabled. Suppressing response.")
+                    return
 
-            if output is None or not output.speech_response:
-                print("[Main] Empty or invalid agent response. Ignoring UI update.")
-                return
+                if output is None or not output.speech_response:
+                    print("[Main] Empty or invalid agent response. Ignoring UI update.")
+                    return
 
-            if cmd_text and self._ai_panel and hasattr(self._ai_panel, 'txt_voice_cmd'):
-                self._ai_panel.txt_voice_cmd.setText(cmd_text)
+                if cmd_text and self._ai_panel and hasattr(self._ai_panel, 'txt_voice_cmd'):
+                    self._ai_panel.txt_voice_cmd.setText(cmd_text)
 
-            # 1. Update UI & Speech Output on Main Thread
-            if output and output.speech_response:
-                if self._tts_worker:
-                    self._tts_worker.speak(output.speech_response)
+                # 1. Update UI & Speech Output on Main Thread
+                if output and output.speech_response:
+                    if self._tts_worker:
+                        self._tts_worker.speak(output.speech_response)
+                    if self._ai_panel:
+                        self._ai_panel.lbl_agent_speech.setText(f"Agent: {output.speech_response}")
+                    if hasattr(self, 'power_widget') and self.power_widget:
+                        self.power_widget.add_log(f"🎙 Agent: {output.speech_response}", "INFO")
+
+                # 2. Update Safety Confirmation Box on UI
                 if self._ai_panel:
-                    self._ai_panel.lbl_agent_speech.setText(f"Agent: {output.speech_response}")
-                if hasattr(self, 'power_widget') and self.power_widget:
-                    self.power_widget.add_log(f"🎙 Agent: {output.speech_response}", "INFO")
+                    pending = self._agent_brain.safety_guard.get_pending_action()
+                    if pending:
+                        self._ai_panel.lbl_safety_prompt.setText(f"CẦN XÁC NHẬN: {pending.get('description')}")
+                        self._ai_panel.grp_safety.setVisible(True)
+                    else:
+                        self._ai_panel.grp_safety.setVisible(False)
 
-            # 2. Update Safety Confirmation Box on UI
-            if self._ai_panel:
-                pending = self._agent_brain.safety_guard.get_pending_action()
-                if pending:
-                    self._ai_panel.lbl_safety_prompt.setText(f"CẦN XÁC NHẬN: {pending.get('description')}")
-                    self._ai_panel.grp_safety.setVisible(True)
-                else:
-                    self._ai_panel.grp_safety.setVisible(False)
-
-            # 3. Execute Immediate Action if approved
-            if immediate_action:
-                self._dispatch_agent_action(immediate_action.get("action"), immediate_action.get("params", {}))
+                # 3. Execute Immediate Action if approved
+                if immediate_action:
+                    self._dispatch_agent_action(immediate_action.get("action"), immediate_action.get("params", {}))
+            finally:
+                self._is_processing_voice = False
 
         worker.sig_result_ready.connect(_on_async_completed)
         worker.start()
@@ -2049,6 +2093,16 @@ class ROVMainWindow(QMainWindow):
         self._frame_timer.stop()
         self._clock_timer.stop()
         self._stop_workers()
+        if hasattr(self, 'telemetry_logger') and self.telemetry_logger:
+            try:
+                self.telemetry_logger.stop()
+            except Exception:
+                pass
+        if hasattr(self, 'db') and self.db and hasattr(self, 'active_session_id') and self.active_session_id:
+            try:
+                self.db.end_dive_session(self.active_session_id, status="COMPLETED")
+            except Exception:
+                pass
         if self._physics:
             self._physics.close()
         event.accept()
