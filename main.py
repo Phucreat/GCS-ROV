@@ -26,6 +26,8 @@ from GUI.widgets.power_widget import PowerWidget
 from GUI.widgets.gl_compass_3d_widget import GLCompass3DWidget
 from GUI.widgets.gl_3d_widget import GLROVWidget
 from GUI.widgets.blueos_manager import BlueOSManagerWindow
+from GUI.widgets.ue5_viewport_widget import UE5ViewportWindow
+from network.ue5_udp_sender import UE5UDPSender
 from database import DatabaseManager, AsyncTelemetryLogger, ReportExporter
 from core.physics_engine import PhysicsEngine
 from core.models.rov_3thruster import ROV3ThrusterModel
@@ -282,6 +284,14 @@ class ROVMainWindow(QMainWindow):
         self.telemetry_logger = AsyncTelemetryLogger(db_manager=self.db)
         self.telemetry_logger.start(session_id=self.active_session_id)
 
+        # ── Unreal Engine 5 Digital Twin UDP Telemetry Sender (60Hz) ──
+        self.ue5_sender = UE5UDPSender(
+            target_ip=self.settings.get("ue5_ip", "127.0.0.1"),
+            target_port=int(self.settings.get("ue5_port", 8888)),
+            send_rate_hz=60
+        )
+        self.ue5_sender.start()
+
         # --- Thay thế placeholder widgets ---
         self._inject_3d_widget()
         self._inject_power_widget()
@@ -433,7 +443,20 @@ class ROVMainWindow(QMainWindow):
 
         self._show_blueos_manager = _show_blueos_manager
 
-        # Thêm nút mở Mission Planner và BlueOS vào toolbar (nếu có)
+        # ── Feature: UE5 Digital Twin Viewport Window ──────────
+        self._ue5_window = None
+
+        def _show_ue5_viewport():
+            ue5_url = self.settings.get("ue5_url", "http://127.0.0.1:80")
+            if self._ue5_window is None:
+                self._ue5_window = UE5ViewportWindow(default_url=ue5_url, udp_sender=self.ue5_sender, parent=None)
+            self._ue5_window.show()
+            self._ue5_window.raise_()
+            self._ue5_window.activateWindow()
+
+        self._show_ue5_viewport = _show_ue5_viewport
+
+        # Thêm nút mở Mission Planner, BlueOS và UE5 3D vào toolbar
         if hasattr(self.ui, 'setup_systeam'):
             btn_mp = QtWidgets.QPushButton("📍 Mission", self)
             btn_mp.setStyleSheet(
@@ -451,12 +474,21 @@ class ROVMainWindow(QMainWindow):
             )
             btn_blueos.clicked.connect(_show_blueos_manager)
 
+            btn_ue5 = QtWidgets.QPushButton("🎮 UE5 3D", self)
+            btn_ue5.setStyleSheet(
+                "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #142338,stop:1 #0C1827);"
+                "color:#00E5FF;border:1px solid #1D3554;border-radius:6px;padding:4px 10px;font-weight:bold;font-size:11px;}"
+                "QPushButton:hover{background:#00A8FF;color:#FFFFFF;border-color:#00F0FF;}"
+            )
+            btn_ue5.clicked.connect(_show_ue5_viewport)
+
             # Chèn vào layout header nếu có
             hdr_layout = self.ui.setup_systeam.parentWidget().layout()
             if hdr_layout:
                 idx = hdr_layout.indexOf(self.ui.setup_systeam)
                 hdr_layout.insertWidget(idx, btn_mp)
                 hdr_layout.insertWidget(idx, btn_blueos)
+                hdr_layout.insertWidget(idx, btn_ue5)
 
         # ── Feature 1 & 2: Video Receiver + AR HUD + AI ──────────
         if HAS_VIDEO:
@@ -2115,6 +2147,17 @@ class ROVMainWindow(QMainWindow):
         self._frame_timer.stop()
         self._clock_timer.stop()
         self._stop_workers()
+        if hasattr(self, '_ue5_window') and self._ue5_window and hasattr(self._ue5_window, 'viewport'):
+            if hasattr(self._ue5_window.viewport, 'auto_launcher'):
+                try:
+                    self._ue5_window.viewport.auto_launcher.stop_simulator()
+                except Exception:
+                    pass
+        if hasattr(self, 'ue5_sender') and self.ue5_sender:
+            try:
+                self.ue5_sender.stop()
+            except Exception:
+                pass
         if hasattr(self, 'telemetry_logger') and self.telemetry_logger:
             try:
                 self.telemetry_logger.stop()
