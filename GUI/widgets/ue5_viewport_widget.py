@@ -147,6 +147,41 @@ _STANDBY_HTML = """<!DOCTYPE html>
 """
 
 
+class UE5RenderCanvas(QWidget):
+    """
+    Pure 3D Render Canvas Viewport for embedding directly inside the main GUI's
+    '3D MOTION & POSITION' frame (frm_simulate_motion) with ZERO header bars or extra toolbars.
+    """
+
+    def __init__(
+        self,
+        default_url: str = "http://127.0.0.1:80",
+        udp_sender: Optional[Any] = None,
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self._url = default_url
+        self._udp_sender = udp_sender
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        if _HAS_WEBENGINE:
+            self.web_view = QWebEngineView(self)
+            def _on_load_finished(ok: bool):
+                if not ok:
+                    self.web_view.setHtml(_STANDBY_HTML)
+            self.web_view.loadFinished.connect(_on_load_finished)
+            self.web_view.load(QUrl(self._url))
+            layout.addWidget(self.web_view)
+        else:
+            fallback = QLabel("⚠️ PyQt6-WebEngine is not installed")
+            fallback.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            fallback.setStyleSheet("color: #FF5252; font-weight: bold; background: #060B14;")
+            layout.addWidget(fallback)
+
+
 class UE5ViewportWidget(QWidget):
     """
     Unreal Engine 5 WebRTC Pixel Streaming Viewport Widget.

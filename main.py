@@ -26,7 +26,7 @@ from GUI.widgets.power_widget import PowerWidget
 from GUI.widgets.gl_compass_3d_widget import GLCompass3DWidget
 from GUI.widgets.gl_3d_widget import GLROVWidget
 from GUI.widgets.blueos_manager import BlueOSManagerWindow
-from GUI.widgets.ue5_viewport_widget import UE5ViewportWindow
+from GUI.widgets.ue5_viewport_widget import UE5ViewportWindow, UE5ViewportWidget, UE5RenderCanvas
 from network.ue5_udp_sender import UE5UDPSender
 from database import DatabaseManager, AsyncTelemetryLogger, ReportExporter
 from core.physics_engine import PhysicsEngine
@@ -343,19 +343,32 @@ class ROVMainWindow(QMainWindow):
     # INJECT WIDGETS VÀO LAYOUT GỐC
     # ----------------------------------------------------------
     def _inject_3d_widget(self):
-        """Thay QOpenGLWidget 'opw_motion' bằng GLROVWidget."""
+        """
+        Khung GCS Thương mại Dual-View 50/50:
+        - Ẩn khung Depth & Compass SLAM theo yêu cầu.
+        - Điều chỉnh tỉ lệ 50/50 giữa Frame Live Camera Feed (Trái) và Frame 3D Motion (Phải).
+        - Nhúng 3D Subsea Digital Twin Engine trực tiếp vào khung 3D MOTION & POSITION.
+        """
+        # 1. Ẩn khung Depth & Compass SLAM bên phải
+        if hasattr(self.ui, 'frm_simulate_control_depth_led'):
+            self.ui.frm_simulate_control_depth_led.hide()
+
+        # 2. Điều chỉnh tỉ lệ chuẩn Thương mại 50/50 cho hàng trên (Live Camera Feed 50% | 3D Motion 50%)
+        if hasattr(self.ui, 'horizontalLayout_3'):
+            self.ui.horizontalLayout_3.setStretch(0, 1)  # Live Camera Feed
+            self.ui.horizontalLayout_3.setStretch(1, 1)  # 3D Motion & Position
+
+        # 3. Nhúng 3D Subsea Render Widget trực tiếp vào ô 3D MOTION & POSITION
         parent = self.ui.frm_simulate_motion
         layout = self.ui.verticalLayout_6
 
-        # Ẩn placeholder
         self.ui.opw_motion.hide()
         layout.removeWidget(self.ui.opw_motion)
 
-        # Thêm widget 3D thật
         self.gl_3d = GLROVWidget(parent=parent)
         layout.addWidget(self.gl_3d)
-        layout.setStretch(0, 1)   # label
-        layout.setStretch(1, 20)  # 3D view
+        layout.setStretch(0, 1)   # Title Label
+        layout.setStretch(1, 20)  # Embedded 3D Render Viewport
 
     def _inject_power_widget(self):
         """Thay QOpenGLWidget 'ogl_powersys' bằng PowerWidget."""
