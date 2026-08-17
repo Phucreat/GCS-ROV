@@ -153,6 +153,8 @@ class UE5RenderCanvas(QWidget):
     '3D MOTION & POSITION' frame (frm_simulate_motion) with ZERO header bars or extra toolbars.
     """
 
+    sig_waypoint_placed = pyqtSignal(float, float, float)
+
     def __init__(
         self,
         default_url: str = "http://127.0.0.1:80",
@@ -180,6 +182,31 @@ class UE5RenderCanvas(QWidget):
             fallback.setAlignment(Qt.AlignmentFlag.AlignCenter)
             fallback.setStyleSheet("color: #FF5252; font-weight: bold; background: #060B14;")
             layout.addWidget(fallback)
+
+    def update_pose(self, x: float = 0.0, y: float = 0.0, z: float = 0.0, roll: float = 0.0, pitch: float = 0.0, yaw: float = 0.0) -> None:
+        """Forward ROV 6-DOF telemetry pose to UE5 UDP Sender at 60Hz."""
+        if self._udp_sender and hasattr(self._udp_sender, 'update_pose'):
+            self._udp_sender.update_pose(x, y, z, roll, pitch, yaw)
+
+    def set_model(self, model_obj: Any = None, cad_file: str = "") -> None:
+        """Model configuration stub for UE5 Digital Twin integration."""
+        pass
+
+    def set_origin(self, pos: Any = None) -> None:
+        """Origin position stub."""
+        pass
+
+    def update_trajectory(self, x: float = 0.0, y: float = 0.0, z: float = 0.0) -> None:
+        """Waypoint trajectory update stub for GCS integration."""
+        pass
+
+    def update_fov_effect(self, heading: float = 0.0) -> None:
+        """FOV effect stub."""
+        pass
+
+    def update_slam_points(self, pts: Any = None) -> None:
+        """SLAM points update stub."""
+        pass
 
 
 class UE5ViewportWidget(QWidget):

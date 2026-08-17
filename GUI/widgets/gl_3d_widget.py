@@ -562,22 +562,21 @@ class GLROVWidget(gl.GLViewWidget):
     # THIẾT LẬP CẢNH
     # ──────────────────────────────────────────────────────────
     def _setup_scene(self):
-        # ── Nền teal sáng như nước biển ───────────────────────
-        # Màu giống screenshot: turquoise #00889C
-        self.setBackgroundColor(pg.mkColor(0, 120, 150))
+        # ── Nền nước biển sâu chuẩn Subsea Digital Twin ───────
+        self.setBackgroundColor(pg.mkColor(4, 20, 42))
         self.setCameraPosition(distance=4.0, elevation=20, azimuth=45)
 
-        # ── Đáy biển terrain (nâu-xám đá) ─────────────────────
+        # ── Đáy biển terrain (nâu-xám rạn san hô Subsea) ──────
         sf_v, sf_f = UnderwaterEnv.seafloor()
         n_sf   = len(sf_f)
         sf_z   = sf_v[sf_f[:, 0], 2]
         z_min, z_max = sf_z.min(), sf_z.max()
         t_sf   = np.clip((sf_z - z_min) / max(z_max - z_min, 1e-6), 0, 1)
         sf_col = np.zeros((n_sf, 4), np.float32)
-        # Màu đá: nâu xám tự nhiên
-        sf_col[:, 0] = 0.28 + t_sf * 0.12   # R
-        sf_col[:, 1] = 0.25 + t_sf * 0.10   # G
-        sf_col[:, 2] = 0.20 + t_sf * 0.08   # B
+        # Màu đá: Nâu trầm kết hợp Teal Subsea
+        sf_col[:, 0] = 0.12 + t_sf * 0.15   # R
+        sf_col[:, 1] = 0.20 + t_sf * 0.15   # G
+        sf_col[:, 2] = 0.26 + t_sf * 0.18   # B
         sf_col[:, 3] = 1.0
         seafloor = gl.GLMeshItem(
             vertexes=sf_v, faces=sf_f, faceColors=sf_col,

@@ -358,7 +358,7 @@ class ROVMainWindow(QMainWindow):
             self.ui.horizontalLayout_3.setStretch(0, 1)  # Live Camera Feed
             self.ui.horizontalLayout_3.setStretch(1, 1)  # 3D Motion & Position
 
-        # 3. Nhúng 3D Subsea Render Widget trực tiếp vào ô 3D MOTION & POSITION
+        # 3. Nhúng GLROVWidget 3D Subsea Render Engine trực tiếp vào ô 3D MOTION & POSITION
         parent = self.ui.frm_simulate_motion
         layout = self.ui.verticalLayout_6
 
