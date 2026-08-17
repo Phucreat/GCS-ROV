@@ -23,11 +23,11 @@ from GUI.widgets.settings_dialog import SettingsDialog
 from network.slam_udp_receiver import SLAMUDPReceiver
 from network.mavlink_worker import MAVLinkWorker
 from GUI.widgets.power_widget import PowerWidget
+from GUI.widgets.pilot_telemetry_widget import PilotTelemetryWidget
 from GUI.widgets.gl_compass_3d_widget import GLCompass3DWidget
+from GUI.widgets.pyvista_3d_widget import PyVista3DWidget
 from GUI.widgets.gl_3d_widget import GLROVWidget
 from GUI.widgets.blueos_manager import BlueOSManagerWindow
-from GUI.widgets.ue5_viewport_widget import UE5ViewportWindow, UE5ViewportWidget, UE5RenderCanvas
-from network.ue5_udp_sender import UE5UDPSender
 from database import DatabaseManager, AsyncTelemetryLogger, ReportExporter
 from core.physics_engine import PhysicsEngine
 from core.models.rov_3thruster import ROV3ThrusterModel
@@ -284,14 +284,6 @@ class ROVMainWindow(QMainWindow):
         self.telemetry_logger = AsyncTelemetryLogger(db_manager=self.db)
         self.telemetry_logger.start(session_id=self.active_session_id)
 
-        # ── Unreal Engine 5 Digital Twin UDP Telemetry Sender (60Hz) ──
-        self.ue5_sender = UE5UDPSender(
-            target_ip=self.settings.get("ue5_ip", "127.0.0.1"),
-            target_port=int(self.settings.get("ue5_port", 8888)),
-            send_rate_hz=60
-        )
-        self.ue5_sender.start()
-
         # --- Thay thế placeholder widgets ---
         self._inject_3d_widget()
         self._inject_power_widget()
@@ -358,14 +350,14 @@ class ROVMainWindow(QMainWindow):
             self.ui.horizontalLayout_3.setStretch(0, 1)  # Live Camera Feed
             self.ui.horizontalLayout_3.setStretch(1, 1)  # 3D Motion & Position
 
-        # 3. Nhúng GLROVWidget 3D Subsea Render Engine trực tiếp vào ô 3D MOTION & POSITION
+        # 3. Nhúng trực tiếp PyVista3DWidget (Mô phỏng 3D Subsea Digital Twin PBR Engine) vào ô 3D MOTION & POSITION
         parent = self.ui.frm_simulate_motion
         layout = self.ui.verticalLayout_6
 
         self.ui.opw_motion.hide()
         layout.removeWidget(self.ui.opw_motion)
 
-        self.gl_3d = GLROVWidget(parent=parent)
+        self.gl_3d = PyVista3DWidget(parent=parent, default_map="RESERVOIR")
         layout.addWidget(self.gl_3d)
         layout.setStretch(0, 1)   # Title Label
         layout.setStretch(1, 20)  # Embedded 3D Render Viewport
@@ -456,20 +448,7 @@ class ROVMainWindow(QMainWindow):
 
         self._show_blueos_manager = _show_blueos_manager
 
-        # ── Feature: UE5 Digital Twin Viewport Window ──────────
-        self._ue5_window = None
-
-        def _show_ue5_viewport():
-            ue5_url = self.settings.get("ue5_url", "http://127.0.0.1:80")
-            if self._ue5_window is None:
-                self._ue5_window = UE5ViewportWindow(default_url=ue5_url, udp_sender=self.ue5_sender, parent=None)
-            self._ue5_window.show()
-            self._ue5_window.raise_()
-            self._ue5_window.activateWindow()
-
-        self._show_ue5_viewport = _show_ue5_viewport
-
-        # Thêm nút mở Mission Planner, BlueOS và UE5 3D vào toolbar
+        # Thêm nút mở Mission Planner và BlueOS vào toolbar
         if hasattr(self.ui, 'setup_systeam'):
             btn_mp = QtWidgets.QPushButton("📍 Mission", self)
             btn_mp.setStyleSheet(
@@ -487,21 +466,12 @@ class ROVMainWindow(QMainWindow):
             )
             btn_blueos.clicked.connect(_show_blueos_manager)
 
-            btn_ue5 = QtWidgets.QPushButton("🎮 UE5 3D", self)
-            btn_ue5.setStyleSheet(
-                "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #142338,stop:1 #0C1827);"
-                "color:#00E5FF;border:1px solid #1D3554;border-radius:6px;padding:4px 10px;font-weight:bold;font-size:11px;}"
-                "QPushButton:hover{background:#00A8FF;color:#FFFFFF;border-color:#00F0FF;}"
-            )
-            btn_ue5.clicked.connect(_show_ue5_viewport)
-
             # Chèn vào layout header nếu có
             hdr_layout = self.ui.setup_systeam.parentWidget().layout()
             if hdr_layout:
                 idx = hdr_layout.indexOf(self.ui.setup_systeam)
                 hdr_layout.insertWidget(idx, btn_mp)
                 hdr_layout.insertWidget(idx, btn_blueos)
-                hdr_layout.insertWidget(idx, btn_ue5)
 
         # ── Feature 1 & 2: Video Receiver + AR HUD + AI ──────────
         if HAS_VIDEO:
@@ -1120,21 +1090,22 @@ class ROVMainWindow(QMainWindow):
 
     def _inject_telemetry_table(self):
         """
-        Thay QTableView 'tabl_data' bằng QTableWidget.
-        QTableView chỉ hỗ trợ model-based API (không có setItem/setColumnCount).
+        Nâng cấp bảng Telemetry cũ thành PilotTelemetryWidget (Glass Cockpit Telemetry Suite):
+        - Chế độ PILOT COCKPIT: Thẻ thông số trực quan, chữ to rõ nét, thanh đo thăng bằng và an toàn pin.
+        - Chế độ RAW TABLE: Bảng số liệu chi tiết kỹ thuật cho kỹ sư.
         """
         parent = self.ui.frm_telemetry_data
         layout = self.ui.verticalLayout_20
 
-        # Ẩn và xóa placeholder QTableView
-        self.ui.tabl_data.hide()
-        layout.removeWidget(self.ui.tabl_data)
+        # Ẩn nhãn và bảng placeholder cũ
+        if hasattr(self.ui, 'lbl_telemetry_data'):
+            self.ui.lbl_telemetry_data.hide()
+        if hasattr(self.ui, 'tabl_data'):
+            self.ui.tabl_data.hide()
+            layout.removeWidget(self.ui.tabl_data)
 
-        # Thay bằng QTableWidget đầy đủ chức năng
-        self._telem_table = QTableWidget(parent=parent)
-        layout.addWidget(self._telem_table)
-        layout.setStretch(0, 1)   # label
-        layout.setStretch(1, 20)  # table
+        self._pilot_telemetry = PilotTelemetryWidget(parent=parent, on_gps_callback=self._open_gps_map)
+        layout.addWidget(self._pilot_telemetry)
 
     # ----------------------------------------------------------
     # KẾT NỐI SIGNAL/SLOT CỦA UI GỐC
@@ -1410,13 +1381,18 @@ class ROVMainWindow(QMainWindow):
         # ── 8. Compass 3D (MỖI FRAME — widget nhỏ, nhẹ) ─────
         self.compass_3d.update_state(quat, vel, depth=self._depth)
 
-        # ── 9. Power widget — throttle ~10 Hz (mỗi 6 frame) ──
+        # ── 9. Power widget & 3D Thruster loads ──────────────
+        if self._connected:
+            loads = [abs(v) for v in state.get("thruster_pct", [])]
+            loads_norm = [t / 100.0 for t in loads] if loads else [0.0]
+        else:
+            loads_norm = [abs(v) for v in self._physics._thruster_inputs] if (self._physics and hasattr(self._physics, '_thruster_inputs')) else [0.0]
+        
+        # Real-time 3D Propeller thrust speed
+        if hasattr(self.gl_3d, 'set_thrust') and loads_norm:
+            self.gl_3d.set_thrust(max(loads_norm))
+
         if self._frame_count % 6 == 0:
-            if self._connected:
-                loads = [abs(v) for v in state.get("thruster_pct", [])]
-                loads_norm = [t / 100.0 for t in loads]
-            else:
-                loads_norm = [abs(v) for v in self._physics._thruster_inputs]
             self.power_widget.set_thruster_loads(loads_norm)
             self.power_widget.set_battery(self._voltage, self._current)
 
@@ -1836,91 +1812,11 @@ class ROVMainWindow(QMainWindow):
                 self._on_ai_detection_toggle(ai_enabled)
 
     # ----------------------------------------------------------
-    # TELEMETRY TABLE
+    # PILOT TELEMETRY SUITE
     # ----------------------------------------------------------
     def _setup_telemetry_table(self):
-        """Cấu hình bảng TELEMETRY DATA (dùng self._telem_table đã inject)."""
-        table = self._telem_table
-        table.setColumnCount(3)
-        table.setHorizontalHeaderLabels(["Sensor", "Value", "Unit"])
-        table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch)
-        table.setEditTriggers(
-            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
-        table.setAlternatingRowColors(True)
-        table.verticalHeader().setVisible(False)
-        table.setSelectionBehavior(
-            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
-        table.setStyleSheet("""
-            QTableWidget {
-                background-color: #060C17;
-                color: #94A9C4;
-                alternate-background-color: #0A1424;
-                gridline-color: #162B47;
-                border: none;
-                font-size: 11px;
-            }
-            QHeaderView::section {
-                background-color: #101E33;
-                color: #00E5FF;
-                border: none;
-                border-bottom: 2px solid #00F0FF;
-                font-size: 9px;
-                font-weight: bold;
-                letter-spacing: 1.2px;
-                padding: 4px 6px;
-                text-transform: uppercase;
-            }
-            QTableWidget::item {
-                padding: 3px 6px;
-                border-bottom: 1px solid rgba(27, 47, 74, 0.4);
-            }
-            QTableWidget::item:selected {
-                background-color: rgba(0, 240, 255, 0.18);
-                color: #FFFFFF;
-            }
-        """)
-        # Các hàng cố định
-        self._telem_rows = {
-            "ROLL":      ("Roll",     "°"),
-            "PITCH":     ("Pitch",    "°"),
-            "YAW":       ("Yaw",      "°"),
-            "DEPTH":     ("Depth",    "m"),
-            "HEADING":   ("Heading",  "°"),
-            "VOLTAGE":   ("Voltage",  "V"),
-            "CURRENT":   ("Current",  "A"),
-            "VEL_X":     ("Vel X",    "m/s"),
-            "VEL_Y":     ("Vel Y",    "m/s"),
-            "VEL_Z":     ("Vel Z",    "m/s"),
-            "THROTTLE":  ("Throttle", "%"),
-            "GPS_MAP":   ("GPS Map Link", "Maps"),
-        }
-        table.setRowCount(len(self._telem_rows))
-        self._telem_items = {}
-        for row, (key, (name, unit)) in enumerate(self._telem_rows.items()):
-            name_item = QTableWidgetItem(name)
-            name_item.setForeground(QtGui.QBrush(QtGui.QColor(91, 116, 142)))
-            table.setItem(row, 0, name_item)
-
-            if key == "GPS_MAP":
-                val_item = QTableWidgetItem("Click to view Map")
-                # Vẽ chữ gạch chân màu xanh liên kết
-                font = QtGui.QFont()
-                font.setUnderline(True)
-                val_item.setFont(font)
-                val_item.setForeground(QtGui.QBrush(QtGui.QColor(0, 168, 255)))
-            else:
-                val_item = QTableWidgetItem("—")
-                val_item.setForeground(QtGui.QBrush(QtGui.QColor(0, 168, 255)))
-
-            table.setItem(row, 1, val_item)
-            unit_item = QTableWidgetItem(unit)
-            unit_item.setForeground(QtGui.QBrush(QtGui.QColor(91, 116, 142)))
-            table.setItem(row, 2, unit_item)
-            self._telem_items[key] = val_item
-
-        # Kết nối sự kiện click ô để mở bản đồ
-        table.cellClicked.connect(self._on_table_cell_clicked)
+        """Cấu hình PilotTelemetryWidget."""
+        pass
 
     def _compute_rov_gps(self):
         """
@@ -1940,64 +1836,40 @@ class ROVMainWindow(QMainWindow):
         )
         return rov_lat, rov_lon, depth_m, url
 
-    def _on_table_cell_clicked(self, row, column):
-        """Mo Google Maps tro dung toa do ROV khi click vao hang GPS Map Link."""
-        table = self._telem_table
-        if not (table.item(row, 0)
-                and table.item(row, 0).text() == "GPS Map Link"):
-            return
+    def _open_gps_map(self):
+        """Mở Google Maps trỏ đúng toạ độ ROV."""
         result = self._compute_rov_gps()
         if result is None:
             QtWidgets.QMessageBox.warning(
-                self, "GCS GPS chua dat",
-                "Vui long nhap toa do GCS (lat/lon) trong Settings truoc."
+                self, "GCS GPS chưa đặt",
+                "Vui lòng nhập toạ độ GCS (lat/lon) trong Settings trước."
             )
             return
         rov_lat, rov_lon, depth_m, url = result
-        # Cap nhat gia tri hien thi trong bang
-        if table.item(row, 1):
-            table.item(row, 1).setText(
-                f"{rov_lat:.6f}, {rov_lon:.6f}  (depth={depth_m:.1f}m)"
-            )
         QtGui.QDesktopServices.openUrl(QtCore.QUrl(url))
 
     def _update_telemetry_table(self):
-        """Cập nhật giá trị trong bảng telemetry."""
-        data = {
-            "ROLL":     f"{math.degrees(self._roll):+.1f}",
-            "PITCH":    f"{math.degrees(self._pitch):+.1f}",
-            "YAW":      f"{math.degrees(self._yaw):+.1f}",
-            "DEPTH":    f"{self._depth:.2f}",
-            "HEADING":  f"{self._heading:.1f}",
-            "VOLTAGE":  f"{self._voltage:.2f}",
-            "CURRENT":  f"{self._current:.2f}",
-            "VEL_X":    f"{self._vel_ned[0]:.2f}",
-            "VEL_Y":    f"{self._vel_ned[1]:.2f}",
-            "VEL_Z":    f"{self._vel_ned[2]:.2f}",
-            "THROTTLE": f"{self._throttle:.0f}",
-        }
-        for key, val_str in data.items():
-            if key in self._telem_items:
-                self._telem_items[key].setText(val_str)
+        """Cập nhật giá trị vào PilotTelemetryWidget (Pilot Cockpit + Raw Table)."""
+        if hasattr(self, '_pilot_telemetry'):
+            self._pilot_telemetry.update_telemetry(
+                roll_deg=math.degrees(self._roll),
+                pitch_deg=math.degrees(self._pitch),
+                yaw_deg=math.degrees(self._yaw),
+                depth_m=self._depth,
+                heading_deg=self._heading,
+                voltage_v=self._voltage,
+                current_a=self._current,
+                vel_x=self._vel_ned[0],
+                vel_y=self._vel_ned[1],
+                vel_z=self._vel_ned[2],
+                throttle_pct=self._throttle,
+                pos_ned=self._pos_ned
+            )
 
     def _update_telemetry_named(self, name: str, value: float):
-        """Thêm cảm biến NAMED_VALUE_FLOAT vào bảng."""
-        table = self._telem_table
-        # Tìm hàng đã có tên này chưa
-        for row in range(table.rowCount()):
-            if table.item(row, 0) and table.item(row, 0).text() == name:
-                table.item(row, 1).setText(f"{value:.4f}")
-                return
-        # Thêm hàng mới
-        row = table.rowCount()
-        table.setRowCount(row + 1)
-        name_item = QTableWidgetItem(name)
-        name_item.setForeground(QtGui.QBrush(QtGui.QColor(0, 200, 100)))
-        table.setItem(row, 0, name_item)
-        val_item = QTableWidgetItem(f"{value:.4f}")
-        val_item.setForeground(QtGui.QBrush(QtGui.QColor(0, 255, 150)))
-        table.setItem(row, 1, val_item)
-        table.setItem(row, 2, QTableWidgetItem(""))
+        """Thêm hoặc cập nhật cảm biến NAMED_VALUE_FLOAT trong bảng Raw."""
+        if hasattr(self, '_pilot_telemetry'):
+            self._pilot_telemetry.update_named_value(name, value)
 
     # ----------------------------------------------------------
     # HEADER LABELS CẬP NHẬT
@@ -2160,17 +2032,6 @@ class ROVMainWindow(QMainWindow):
         self._frame_timer.stop()
         self._clock_timer.stop()
         self._stop_workers()
-        if hasattr(self, '_ue5_window') and self._ue5_window and hasattr(self._ue5_window, 'viewport'):
-            if hasattr(self._ue5_window.viewport, 'auto_launcher'):
-                try:
-                    self._ue5_window.viewport.auto_launcher.stop_simulator()
-                except Exception:
-                    pass
-        if hasattr(self, 'ue5_sender') and self.ue5_sender:
-            try:
-                self.ue5_sender.stop()
-            except Exception:
-                pass
         if hasattr(self, 'telemetry_logger') and self.telemetry_logger:
             try:
                 self.telemetry_logger.stop()

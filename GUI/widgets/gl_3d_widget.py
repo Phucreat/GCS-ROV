@@ -44,6 +44,8 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 import pyqtgraph.opengl as gl
 import pyqtgraph as pg
 
+from GUI.widgets.env_maps import get_map, get_all_maps_display, DEFAULT_MAP, EnvMapConfig
+
 
 # ═══════════════════════════════════════════════════════════════
 # CAMERA MODE
@@ -373,15 +375,15 @@ class UnderwaterEnv:
         return verts, np.array(faces, np.int32), XX, YY
 
     @staticmethod
-    def seafloor(size=100.0, grid=24, depth=-16.0):
-        np.random.seed(7)
+    def seafloor(size=100.0, grid=24, depth=-16.0, roughness=1.4, seed=7):
+        np.random.seed(seed)
         xs = np.linspace(-size/2, size/2, grid)
         ys = np.linspace(-size/2, size/2, grid)
         XX, YY = np.meshgrid(xs, ys)
         ZZ = (np.sin(XX*0.24)*0.6 + np.cos(YY*0.20)*0.5
             + np.sin((XX+YY)*0.12)*0.4
             + np.random.uniform(-0.30, 0.30, XX.shape))
-        ZZ = ZZ * 1.4 + depth
+        ZZ = ZZ * roughness + depth
         verts = np.stack([XX.ravel(), YY.ravel(), ZZ.ravel()], axis=1).astype(np.float32)
         faces = []
         for iy in range(grid-1):
@@ -404,6 +406,192 @@ class UnderwaterEnv:
             pts = np.stack([ox+t*dx, oy+t*dy, -t*length], axis=1).astype(np.float32)
             lines.append(pts)
         return lines
+
+
+# ═══════════════════════════════════════════════════════════════
+# PROPELLER SYSTEM
+# ═══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# PROPELLER SYSTEM (Cinematic 3D Thruster Blades & Hubs)
+# ═══════════════════════════════════════════════════════════════
+class PropellerSystem:
+    """
+    Hệ thống cánh quạt chân vịt 3D cinematic:
+    - Trục xoay Hub + 3 lá quạt có độ nghiêng khí động học (airfoil pitch)
+    - Liên kết chính xác với thân ROV theo toạ độ thế giới + góc xoay thân (Yaw/Pitch/Roll)
+    - Tốc độ quay tỷ lệ thuận với lực đẩy (Thrust load)
+    """
+
+    def __init__(self):
+        self._items = []
+        self._thrust = 0.0
+        self._world_pos = np.zeros(3, np.float32)
+        self._yaw = 0.0
+        self._pitch = 0.0
+        self._roll = 0.0
+
+    @staticmethod
+    def create_propeller_mesh(radius=0.042, pitch_deg=25.0):
+        """Tạo geometry 3D gồm Hub trung tâm + 3 lá cánh quạt nghiêng."""
+        verts = []
+        faces = []
+
+        # 1. Central spinner hub (hình trụ nhỏ dọc trục X)
+        segs = 10
+        hub_r = radius * 0.28
+        hub_len = radius * 0.60
+        ang = np.linspace(0, 2*np.pi, segs, endpoint=False)
+        for a in ang:
+            verts.append([-hub_len*0.3, hub_r*np.cos(a), hub_r*np.sin(a)])
+        for a in ang:
+            verts.append([+hub_len*0.7, hub_r*0.6*np.cos(a), hub_r*0.6*np.sin(a)])
+        # Hub cap front
+        verts.append([+hub_len*0.9, 0.0, 0.0])
+        # Hub base rear
+        verts.append([-hub_len*0.3, 0.0, 0.0])
+        front_center = 2 * segs
+        rear_center  = 2 * segs + 1
+
+        for i in range(segs):
+            i_next = (i + 1) % segs
+            # Side quads
+            faces.append([i, i_next, segs + i_next])
+            faces.append([i, segs + i_next, segs + i])
+            # Front cap
+            faces.append([segs + i, segs + i_next, front_center])
+            # Rear cap
+            faces.append([rear_center, i_next, i])
+
+        # 2. Three pitched blades (3 lá quạt cách đều 120 độ)
+        pitch_rad = math.radians(pitch_deg)
+        sin_p = math.sin(pitch_rad)
+        cos_p = math.cos(pitch_rad)
+        blade_len = radius
+        blade_w   = radius * 0.38
+
+        for b in range(3):
+            blade_ang = b * (2.0 * math.pi / 3.0)
+            ca = math.cos(blade_ang)
+            sa = math.sin(blade_ang)
+
+            # Local coordinates of blade in unrotated frame
+            # Blade extends along Y, pitched around Y
+            p0 = [ -blade_w*0.3*sin_p,  hub_r*0.8, -blade_w*0.3*cos_p ]
+            p1 = [ +blade_w*0.3*sin_p,  hub_r*0.8, +blade_w*0.3*cos_p ]
+            p2 = [ +blade_w*0.45*sin_p, blade_len*0.65, +blade_w*0.45*cos_p ]
+            p3 = [ -blade_w*0.25*sin_p, blade_len*0.65, -blade_w*0.25*cos_p ]
+            p4 = [ 0.0, blade_len, 0.0 ]
+
+            blade_pts = [p0, p1, p2, p3, p4]
+            # Rotate blade pts by blade_ang around X axis
+            rot_pts = []
+            for pt in blade_pts:
+                rx = pt[0]
+                ry = pt[1]*ca - pt[2]*sa
+                rz = pt[1]*sa + pt[2]*ca
+                rot_pts.append([rx, ry, rz])
+
+            base_idx = len(verts)
+            verts.extend(rot_pts)
+            # 2 quads / triangles for blade surface (front & back for visibility)
+            faces.append([base_idx+0, base_idx+1, base_idx+2])
+            faces.append([base_idx+0, base_idx+2, base_idx+3])
+            faces.append([base_idx+3, base_idx+2, base_idx+4])
+            # Double-sided
+            faces.append([base_idx+2, base_idx+1, base_idx+0])
+            faces.append([base_idx+2, base_idx+3, base_idx+0])
+            faces.append([base_idx+4, base_idx+2, base_idx+3])
+
+        return np.array(verts, np.float32), np.array(faces, np.int32)
+
+    def configure(self, cfg: dict):
+        """Khởi tạo danh sách thruster từ visual config của model."""
+        self._items = []
+        if not cfg:
+            return
+
+        # 1. Horizontal thrusters
+        ht_list = cfg.get("horizontal_thrusters", [])
+        for idx, ht in enumerate(ht_list):
+            v, f = self.create_propeller_mesh(radius=0.038, pitch_deg=25.0)
+            n_f = len(f)
+            col = np.zeros((n_f, 4), np.float32)
+            # Hub: Dark titanium gray; Blades: Bright Cyan anodized aluminum
+            col[:20, 0] = 0.25; col[:20, 1] = 0.28; col[:20, 2] = 0.32; col[:20, 3] = 0.95
+            col[20:, 0] = 0.00; col[20:, 1] = 0.88; col[20:, 2] = 1.00; col[20:, 3] = 0.90
+            mesh = gl.GLMeshItem(vertexes=v, faces=f, faceColors=col, smooth=True, drawEdges=True, edgeColor=(0.0, 1.0, 1.0, 0.4))
+            mesh.setGLOptions('translucent')
+            self._items.append({
+                'item': mesh,
+                'pos': np.array(ht.get("pos", [0, 0, 0]), np.float32),
+                'angle_deg': float(ht.get("angle_deg", 0.0)),
+                'is_vertical': False,
+                'spin_angle': 0.0,
+                'dir_sign': 1.0 if (idx % 2 == 0) else -1.0,
+            })
+
+        # 2. Vertical thrusters
+        vt_list = cfg.get("vertical_thrusters", [])
+        for idx, vt in enumerate(vt_list):
+            v, f = self.create_propeller_mesh(radius=0.038, pitch_deg=25.0)
+            n_f = len(f)
+            col = np.zeros((n_f, 4), np.float32)
+            col[:20, 0] = 0.25; col[:20, 1] = 0.28; col[:20, 2] = 0.32; col[:20, 3] = 0.95
+            col[20:, 0] = 0.20; col[20:, 1] = 0.95; col[20:, 2] = 0.65; col[20:, 3] = 0.90
+            mesh = gl.GLMeshItem(vertexes=v, faces=f, faceColors=col, smooth=True, drawEdges=True, edgeColor=(0.2, 1.0, 0.7, 0.4))
+            mesh.setGLOptions('translucent')
+            self._items.append({
+                'item': mesh,
+                'pos': np.array(vt.get("pos", [0, 0, 0]), np.float32),
+                'angle_deg': 0.0,
+                'is_vertical': True,
+                'spin_angle': 0.0,
+                'dir_sign': 1.0 if (idx % 2 == 0) else -1.0,
+            })
+
+        self._update_transforms()
+
+    def get_items(self):
+        return [it['item'] for it in self._items]
+
+    def update_pose(self, world_pos: np.ndarray, yaw: float, pitch: float, roll: float):
+        """Cập nhật vị trí & tư thế thân ROV trong không gian 3D."""
+        self._world_pos = np.array(world_pos, np.float32)
+        self._yaw = float(yaw)
+        self._pitch = float(pitch)
+        self._roll = float(roll)
+        self._update_transforms()
+
+    def animate(self, dt: float, thrust_level: float):
+        """Quay cánh quạt theo tốc độ thrust hiện tại."""
+        self._thrust = max(0.0, min(1.0, float(thrust_level)))
+        # Base spin 120 RPM idle + up to 1800 RPM at full thrust
+        spin_speed = (8.0 + self._thrust * 120.0) * (dt / 0.05)
+        for it in self._items:
+            it['spin_angle'] = (it['spin_angle'] + spin_speed * it['dir_sign']) % 360.0
+        self._update_transforms()
+
+    def _update_transforms(self):
+        """Áp dụng chuỗi biến đổi hình học (Body Transform -> Mounting Offset -> Spin)."""
+        for it in self._items:
+            mesh = it['item']
+            mesh.resetTransform()
+            # 1. Translate to ROV world position
+            mesh.translate(*self._world_pos)
+            # 2. Rotate with ROV body attitude
+            mesh.rotate(self._yaw, 0, 0, 1)
+            mesh.rotate(self._pitch, 0, 1, 0)
+            mesh.rotate(self._roll, 1, 0, 0)
+            # 3. Translate to local thruster position
+            mesh.translate(*it['pos'])
+            # 4. Rotate to thruster mounting orientation
+            if it['is_vertical']:
+                mesh.rotate(90.0, 0, 1, 0)  # Point along Z-axis
+            elif it['angle_deg'] != 0.0:
+                mesh.rotate(it['angle_deg'], 0, 0, 1)
+            # 5. Spin around thruster shaft axis (X-axis)
+            mesh.rotate(it['spin_angle'], 1, 0, 0)
+
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -513,6 +701,17 @@ class GLROVWidget(gl.GLViewWidget):
         self._hud = _HUDOverlay(self)
         self._hud.setGeometry(self.rect())
 
+        self._current_map_name = DEFAULT_MAP
+        self._env_config = get_map(DEFAULT_MAP)
+        self._env_items = []
+        
+        self._propeller_system = PropellerSystem()
+        self._propeller_items = []
+        self._thrust_level = 0.0
+        self._prop_angle = 0.0
+        self._dust_item = None
+        self._god_ray_items = []
+
         self._setup_scene()
 
         # R-Click context menu
@@ -562,28 +761,6 @@ class GLROVWidget(gl.GLViewWidget):
     # THIẾT LẬP CẢNH
     # ──────────────────────────────────────────────────────────
     def _setup_scene(self):
-        # ── Nền nước biển sâu chuẩn Subsea Digital Twin ───────
-        self.setBackgroundColor(pg.mkColor(4, 20, 42))
-        self.setCameraPosition(distance=4.0, elevation=20, azimuth=45)
-
-        # ── Đáy biển terrain (nâu-xám rạn san hô Subsea) ──────
-        sf_v, sf_f = UnderwaterEnv.seafloor()
-        n_sf   = len(sf_f)
-        sf_z   = sf_v[sf_f[:, 0], 2]
-        z_min, z_max = sf_z.min(), sf_z.max()
-        t_sf   = np.clip((sf_z - z_min) / max(z_max - z_min, 1e-6), 0, 1)
-        sf_col = np.zeros((n_sf, 4), np.float32)
-        # Màu đá: Nâu trầm kết hợp Teal Subsea
-        sf_col[:, 0] = 0.12 + t_sf * 0.15   # R
-        sf_col[:, 1] = 0.20 + t_sf * 0.15   # G
-        sf_col[:, 2] = 0.26 + t_sf * 0.18   # B
-        sf_col[:, 3] = 1.0
-        seafloor = gl.GLMeshItem(
-            vertexes=sf_v, faces=sf_f, faceColors=sf_col,
-            smooth=True, drawEdges=False
-        )
-        self.addItem(seafloor)
-
         # ── Home marker (gốc tọa độ) ──────────────────────────
         orig_grid = gl.GLGridItem()
         orig_grid.setSize(5, 5)
@@ -603,50 +780,94 @@ class GLROVWidget(gl.GLViewWidget):
         # ── Trục tọa độ thế giới ─────────────────────────────
         self._add_world_axes(2.5, 3.0)
 
-        # ── God Rays (ánh sáng từ mặt nước) ──────────────────
-        for ray in UnderwaterEnv.god_rays(n=8):
+        # ── Depth warning plane (mặc định tại -10m) ──────────
+        self._add_depth_plane(depth_limit=-10.0)
+
+        self._build_environment(self._env_config)
+
+    def _build_environment(self, cfg: EnvMapConfig):
+        for item in self._env_items:
+            self.removeItem(item)
+        self._env_items.clear()
+        self._god_ray_items.clear()
+
+        self.setBackgroundColor(pg.mkColor(*cfg.background_color))
+        self.setCameraPosition(distance=4.0, elevation=20, azimuth=45)
+
+        # Seafloor
+        sf_v, sf_f = UnderwaterEnv.seafloor(size=cfg.terrain.grid_size, grid=cfg.terrain.grid_res, depth=cfg.terrain.depth, roughness=cfg.terrain.roughness, seed=cfg.terrain.seed)
+        n_sf = len(sf_f)
+        sf_z = sf_v[sf_f[:, 0], 2]
+        z_min, z_max = sf_z.min(), sf_z.max()
+        t_sf = np.clip((sf_z - z_min) / max(z_max - z_min, 1e-6), 0, 1)
+        sf_col = np.zeros((n_sf, 4), np.float32)
+        sf_col[:, 0] = cfg.terrain.color_r[0] + t_sf * cfg.terrain.color_r[1]
+        sf_col[:, 1] = cfg.terrain.color_g[0] + t_sf * cfg.terrain.color_g[1]
+        sf_col[:, 2] = cfg.terrain.color_b[0] + t_sf * cfg.terrain.color_b[1]
+        sf_col[:, 3] = 1.0
+        seafloor = gl.GLMeshItem(vertexes=sf_v, faces=sf_f, faceColors=sf_col, smooth=True, drawEdges=False)
+        self.addItem(seafloor)
+        self._env_items.append(seafloor)
+
+        # God rays
+        for ray in UnderwaterEnv.god_rays(n=cfg.lighting.god_ray_count, length=cfg.lighting.god_ray_length, spread=cfg.lighting.god_ray_spread):
             n_r = len(ray)
-            alp = np.linspace(0.18, 0.0, n_r)
-            c   = np.zeros((n_r, 4), np.float32)
-            # Màu ánh sáng teal
-            c[:, 0] = 0.60; c[:, 1] = 0.95; c[:, 2] = 1.0
+            alp = np.linspace(cfg.water.surface_alpha, 0.0, n_r)
+            c = np.zeros((n_r, 4), np.float32)
+            c[:, 0] = cfg.lighting.god_ray_color[0]; c[:, 1] = cfg.lighting.god_ray_color[1]; c[:, 2] = cfg.lighting.god_ray_color[2]
             c[:, 3] = alp
             ri = gl.GLLinePlotItem(pos=ray, color=c, width=3.0, antialias=True)
             ri.setGLOptions('additive')
             self.addItem(ri)
+            self._env_items.append(ri)
+            self._god_ray_items.append({'item': ri, 'base_color': c.copy()})
 
-        # ── Mặt nước (animated sine wave) ────────────────────
+        # Water surface
         ws_v, ws_f, self._water_XX, self._water_YY = UnderwaterEnv.water_surface()
-        self._water_base  = ws_v.copy()
+        self._water_base = ws_v.copy()
         self._water_faces = ws_f
         n_wf = len(ws_f)
         self._water_colors = np.zeros((n_wf, 4), np.float32)
-        self._water_colors[:, 0] = 0.10
-        self._water_colors[:, 1] = 0.72
-        self._water_colors[:, 2] = 0.80
-        self._water_colors[:, 3] = 0.22
-        self._water_mesh = gl.GLMeshItem(
-            vertexes=ws_v, faces=ws_f, faceColors=self._water_colors,
-            smooth=True, drawEdges=True,
-            edgeColor=(0.2, 0.8, 0.9, 0.05)
-        )
+        self._water_colors[:, 0] = cfg.water.surface_color[0]
+        self._water_colors[:, 1] = cfg.water.surface_color[1]
+        self._water_colors[:, 2] = cfg.water.surface_color[2]
+        self._water_colors[:, 3] = cfg.water.surface_color[3]
+        self._water_mesh = gl.GLMeshItem(vertexes=ws_v, faces=ws_f, faceColors=self._water_colors, smooth=True, drawEdges=True, edgeColor=(0.2, 0.8, 0.9, 0.05))
         self._water_mesh.setGLOptions('translucent')
         self.addItem(self._water_mesh)
+        self._env_items.append(self._water_mesh)
 
-        # ── Bong bóng ─────────────────────────────────────────
-        self._bub_pts[:, 0] = np.random.uniform(-10, 10, self._n_bub)
-        self._bub_pts[:, 1] = np.random.uniform(-10, 10, self._n_bub)
+        # Bubbles
+        self._n_bub = cfg.particles.bubble_count
+        self._bub_pts = np.zeros((self._n_bub, 3), np.float32)
+        self._bub_spd = np.random.uniform(cfg.particles.bubble_speed_range[0], cfg.particles.bubble_speed_range[1], self._n_bub)
+        self._bub_sz = np.random.uniform(cfg.particles.bubble_size_range[0], cfg.particles.bubble_size_range[1], self._n_bub)
+        self._bub_pts[:, 0] = np.random.uniform(-cfg.particles.bubble_spread, cfg.particles.bubble_spread, self._n_bub)
+        self._bub_pts[:, 1] = np.random.uniform(-cfg.particles.bubble_spread, cfg.particles.bubble_spread, self._n_bub)
         self._bub_pts[:, 2] = np.random.uniform(-9, 0, self._n_bub)
-        self._bub_item = gl.GLScatterPlotItem(
-            pos=self._bub_pts,
-            color=(0.9, 0.98, 1.0, 0.50),
-            size=self._bub_sz, pxMode=True
-        )
+        self._bub_item = gl.GLScatterPlotItem(pos=self._bub_pts, color=cfg.particles.bubble_color, size=self._bub_sz, pxMode=True)
         self._bub_item.setGLOptions('additive')
         self.addItem(self._bub_item)
+        self._env_items.append(self._bub_item)
 
-        # ── Depth warning plane (mặc định tại -10m) ──────────
-        self._add_depth_plane(depth_limit=-10.0)
+        # Dust
+        n_dust = cfg.particles.dust_count
+        self._dust_pts = np.zeros((n_dust, 3), np.float32)
+        self._dust_pts[:, 0] = np.random.uniform(-15, 15, n_dust)
+        self._dust_pts[:, 1] = np.random.uniform(-15, 15, n_dust)
+        self._dust_pts[:, 2] = np.random.uniform(-15, 0, n_dust)
+        self._dust_item = gl.GLScatterPlotItem(pos=self._dust_pts, color=cfg.particles.dust_color, size=cfg.particles.dust_size, pxMode=True)
+        self._dust_item.setGLOptions('additive')
+        self.addItem(self._dust_item)
+        self._env_items.append(self._dust_item)
+
+    def switch_map(self, map_name):
+        self._current_map_name = map_name
+        self._env_config = get_map(map_name)
+        self._build_environment(self._env_config)
+
+    def set_thrust(self, level):
+        self._thrust_level = max(0.0, min(1.0, float(level)))
 
     def _add_world_axes(self, length=2.5, width=3.0):
         dirs   = [[length,0,0],[0,length,0],[0,0,length]]
@@ -692,9 +913,11 @@ class GLROVWidget(gl.GLViewWidget):
         nv = self._water_base.copy()
         XX = self._water_XX.ravel()
         YY = self._water_YY.ravel()
-        nv[:, 2] = (0.055*np.sin(XX*1.10 + t*2.1)
-                  + 0.040*np.cos(YY*0.85 + t*1.7)
-                  + 0.025*np.sin((XX+YY)*0.50 + t*0.9))
+        cfg = self._env_config
+        nv[:, 2] = (cfg.water.wave_amplitude_1 * np.sin(XX * cfg.water.wave_freq_1 + t * cfg.water.wave_speed_1)
+                  + cfg.water.wave_amplitude_2 * np.cos(YY * cfg.water.wave_freq_2 + t * cfg.water.wave_speed_2)
+                  + cfg.water.wave_amplitude_3 * np.sin((XX+YY) * cfg.water.wave_freq_3 + t * cfg.water.wave_speed_3)
+                  + cfg.water.wave_amplitude_4 * np.cos((XX-YY) * cfg.water.wave_freq_4 + t * cfg.water.wave_speed_4))
         self._water_mesh.setMeshData(
             vertexes=nv, faces=self._water_faces,
             faceColors=self._water_colors
@@ -706,10 +929,34 @@ class GLROVWidget(gl.GLViewWidget):
         mask = self._bub_pts[:, 2] > (rp[2] + 1.5)
         n    = mask.sum()
         if n:
-            self._bub_pts[mask, 0] = rp[0] + np.random.uniform(-9, 9, n)
-            self._bub_pts[mask, 1] = rp[1] + np.random.uniform(-9, 9, n)
+            self._bub_pts[mask, 0] = rp[0] + np.random.uniform(-cfg.particles.bubble_spread, cfg.particles.bubble_spread, n)
+            self._bub_pts[mask, 1] = rp[1] + np.random.uniform(-cfg.particles.bubble_spread, cfg.particles.bubble_spread, n)
             self._bub_pts[mask, 2] = rp[2] - np.random.uniform(6, 11, n)
         self._bub_item.setData(pos=self._bub_pts)
+
+        # Dust
+        if self._dust_item is not None:
+            self._dust_pts[:, 0] += 0.015
+            self._dust_pts[:, 1] += 0.010
+            mask2 = (self._dust_pts[:, 0] > rp[0] + 15) | (self._dust_pts[:, 1] > rp[1] + 15)
+            n2 = mask2.sum()
+            if n2:
+                self._dust_pts[mask2, 0] = rp[0] - 15
+                self._dust_pts[mask2, 1] = rp[1] - 15
+                self._dust_pts[mask2, 2] = rp[2] + np.random.uniform(-15, 5, n2)
+            self._dust_item.setData(pos=self._dust_pts)
+
+        # God rays
+        if cfg.lighting.god_ray_pulse and len(self._god_ray_items) > 0:
+            pulse = 0.5 + 0.5 * math.sin(t * 1.5)
+            for entry in self._god_ray_items:
+                ri = entry['item']
+                c = entry['base_color'].copy()
+                c[:, 3] = np.linspace(cfg.water.surface_alpha * pulse, 0.0, len(c))
+                ri.setData(color=c)
+
+        self._prop_angle += 15.0 * self._thrust_level
+        self._propeller_system.animate(0.048, self._thrust_level)
 
     # ──────────────────────────────────────────────────────────
     # CONTEXT MENU
@@ -720,6 +967,17 @@ class GLROVWidget(gl.GLViewWidget):
             QMenu{background:#082030;color:#A0D0E0;border:1px solid #0A5070;}
             QMenu::item:selected{background:#0A4060;}
         """)
+        map_menu = menu.addMenu("🗺 Chuyển Map")
+        map_actions = {}
+        for disp_name, m_name in get_all_maps_display():
+            m_act = map_menu.addAction(disp_name)
+            m_act.setCheckable(True)
+            if m_name == self._current_map_name:
+                m_act.setChecked(True)
+            map_actions[m_act] = m_name
+
+        menu.addSeparator()
+
         a_follow  = menu.addAction("📹  FOLLOW — Bám theo ROV")
         a_orbit   = menu.addAction("🔄  ORBIT  — Xoay cinematic")
         a_map     = menu.addAction("🗺   MAP    — Nhìn từ trên")
@@ -740,6 +998,10 @@ class GLROVWidget(gl.GLViewWidget):
             a.setChecked(self._cam_mode == m)
 
         act = menu.exec(self.mapToGlobal(pos))
+        if act in map_actions:
+            self.switch_map(map_actions[act])
+            return
+
         if act == a_follow:
             self._cam_mode = CameraMode.FOLLOW
             self._user_ctrl = False
@@ -775,6 +1037,10 @@ class GLROVWidget(gl.GLViewWidget):
         for it in self._rov_items:
             self.removeItem(it)
         self._rov_items.clear()
+        for it in self._propeller_items:
+            self.removeItem(it)
+        self._propeller_items.clear()
+
         # Velocity arrow items are persistent (pre-allocated), just hide them
         self._vel_line.setVisible(False)
         self._vel_cone.setVisible(False)
@@ -805,21 +1071,37 @@ class GLROVWidget(gl.GLViewWidget):
             self._build_proc(); return
         scale = 1.0 / max(np.ptp(v, axis=0))
         v     = (v - v.mean(axis=0)) * scale
-        # ── Màu TRUNG TÍNH (xám metallic) — không override màu gốc file ──
-        # Dùng xám bạc trung tính thay vì xanh lè
+
+        v0 = v[f[:, 0]]
+        v1 = v[f[:, 1]]
+        v2 = v[f[:, 2]]
+        normals = np.cross(v1 - v0, v2 - v0)
+        norm_len = np.linalg.norm(normals, axis=1, keepdims=True)
+        norm_len[norm_len < 1e-6] = 1e-6
+        normals = normals / norm_len
+        z_dot = normals[:, 2]
+
         n_f   = len(f)
         col   = np.zeros((n_f, 4), np.float32)
-        col[:, 0] = 0.62   # R  xám bạc ấm
-        col[:, 1] = 0.65   # G
-        col[:, 2] = 0.68   # B
-        col[:, 3] = 0.92
+        col[:, 3] = 0.94
+
+        w_top = np.clip(z_dot, 0, 1)
+        w_bot = np.clip(-z_dot, 0, 1)
+        w_side = np.clip(1.0 - np.abs(z_dot), 0, 1)
+
+        # High-Fidelity Subsea Livery: Safety Yellow top, Graphite-Ti flanks, Dark belly
+        col[:, 0] = w_top * 0.92 + w_side * 0.38 + w_bot * 0.16
+        col[:, 1] = w_top * 0.74 + w_side * 0.42 + w_bot * 0.18
+        col[:, 2] = w_top * 0.10 + w_side * 0.48 + w_bot * 0.22
+
         mesh = gl.GLMeshItem(
             vertexes=v, faces=f, faceColors=col,
             smooth=True, drawEdges=True,
-            edgeColor=(0.9, 0.9, 0.95, 0.20)
+            edgeColor=(0.85, 0.92, 1.0, 0.25)
         )
         self.addItem(mesh)
         self._rov_items.append(mesh)
+        self._attach_propellers()
 
     def _build_proc(self):
         cfg = self._model_config
@@ -871,6 +1153,20 @@ class GLROVWidget(gl.GLViewWidget):
             m   = gl.GLMeshItem(vertexes=v,faces=f,faceColors=c,smooth=True)
             m.setGLOptions('translucent')
             self.addItem(m); self._rov_items.append(m)
+            
+        self._attach_propellers()
+
+    def _attach_propellers(self):
+        cfg = self._model_config
+        if not cfg: return
+        for it in self._propeller_items:
+            self.removeItem(it)
+        self._propeller_items.clear()
+
+        self._propeller_system.configure(cfg)
+        for item in self._propeller_system.get_items():
+            self.addItem(item)
+            self._propeller_items.append(item)
 
     # ──────────────────────────────────────────────────────────
     # CẬP NHẬT TRẠNG THÁI
@@ -923,6 +1219,7 @@ class GLROVWidget(gl.GLViewWidget):
             it.rotate(pitch,0,1,0)
             it.rotate(roll, 1,0,0)
             it.translate(*pos)
+        self._propeller_system.update_pose(pos, yaw, pitch, roll)
 
     def _update_vel_vector(self, speed, hdg_deg, pitch_deg, pos):
         """Mũi tên vận tốc gắn trên thân ROV — reuses pre-allocated items."""
