@@ -30,6 +30,7 @@ from GUI.widgets.gl_3d_widget import GLROVWidget
 from GUI.widgets.blueos_manager import BlueOSManagerWindow
 from database import DatabaseManager, AsyncTelemetryLogger, ReportExporter
 from core.physics_engine import PhysicsEngine
+from core.autonomous_controller import AutonomousController
 from core.models.rov_3thruster import ROV3ThrusterModel
 from core.models.rov_6thruster import ROV6ThrusterModel
 from GUI.guirov import Ui_MainWindow
@@ -39,6 +40,7 @@ import time
 import argparse
 import numpy as np
 import os
+from typing import Dict, List, Optional, Tuple
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import (
@@ -262,6 +264,7 @@ class ROVMainWindow(QMainWindow):
         self._ai_panel:    object = None
         self._ipc_bus:     object = None
         self._agent_brain: object = None
+        self._auto_controller = AutonomousController()
         self._vad_worker:  object = None
         self._stt_worker:  object = None
         self._tts_worker:  object = None
@@ -1001,10 +1004,13 @@ class ROVMainWindow(QMainWindow):
         worker.start()
 
     def _dispatch_agent_action(self, action_name: str, params: dict):
-        """Execute dispatched MAVLink / UI actions from Agent."""
+        """Execute dispatched MAVLink / Hardware actions from Voice Agent."""
         print(f"[Main] Dispatching Agent Action: {action_name} ({params})")
         if hasattr(self, 'power_widget') and self.power_widget:
             self.power_widget.add_log(f"⚙️ Thực thi lệnh Agent: {action_name}", "SUCCESS")
+
+        speed = float(params.get("speed", 0.6))
+        duration = float(params.get("duration", 1.5))
 
         if action_name == "set_lights":
             val = params.get("value", 100)
@@ -1017,6 +1023,134 @@ class ROVMainWindow(QMainWindow):
             self._emergency_stop()
         elif action_name == "take_snapshot":
             self._take_snapshot()
+        elif action_name == "goto_depth":
+            target_d = float(params.get("target_depth", 5.0))
+            if hasattr(self, '_auto_controller'):
+                msg = self._auto_controller.goto_depth(target_d)
+                if hasattr(self, 'power_widget') and self.power_widget:
+                    self.power_widget.add_log(f"🎯 {msg}", "INFO")
+        elif action_name == "relative_move":
+            sx = float(params.get("surge_m", 0.0))
+            sy = float(params.get("sway_m", 0.0))
+            sz = float(params.get("heave_m", 0.0))
+            if hasattr(self, '_auto_controller'):
+                msg = self._auto_controller.relative_move(
+                    sx, sy, sz,
+                    self._pos_ned.tolist() if hasattr(self._pos_ned, 'tolist') else list(self._pos_ned),
+                    float(self._heading)
+                )
+                if hasattr(self, 'power_widget') and self.power_widget:
+                    self.power_widget.add_log(f"🧭 {msg}", "INFO")
+        elif action_name == "execute_pattern":
+            ptype = params.get("pattern_type", "circle")
+            if hasattr(self, '_auto_controller'):
+                if ptype == "circle":
+                    rad = float(params.get("radius_m", 3.0))
+                    msg = self._auto_controller.start_circle_orbit(
+                        rad,
+                        self._pos_ned.tolist() if hasattr(self._pos_ned, 'tolist') else list(self._pos_ned)
+                    )
+                elif ptype == "yaw_scan_360":
+                    msg = self._auto_controller.start_yaw_scan_360(float(self._heading))
+                else:
+                    msg = self._auto_controller.start_circle_orbit(
+                        3.0,
+                        self._pos_ned.tolist() if hasattr(self._pos_ned, 'tolist') else list(self._pos_ned)
+                    )
+                if hasattr(self, 'power_widget') and self.power_widget:
+                    self.power_widget.add_log(f"🌀 {msg}", "INFO")
+        elif action_name == "return_to_home":
+            if hasattr(self, '_auto_controller'):
+                msg = self._auto_controller.start_rth(
+                    self._pos_ned.tolist() if hasattr(self._pos_ned, 'tolist') else list(self._pos_ned)
+                )
+                if hasattr(self, 'power_widget') and self.power_widget:
+                    self.power_widget.add_log(f"🏠 {msg}", "INFO")
+        elif action_name == "toggle_recording":
+            start_rec = params.get("start", True)
+            self._toggle_recording(start_rec)
+        elif action_name == "switch_3d_camera":
+            cam_mode = str(params.get("mode", "isometric"))
+            if hasattr(self, 'gl_3d') and hasattr(self.gl_3d, 'set_camera_mode_by_name'):
+                self.gl_3d.set_camera_mode_by_name(cam_mode)
+        elif action_name == "switch_3d_map":
+            map_name = str(params.get("map_name", "RESERVOIR"))
+            if hasattr(self, 'gl_3d') and hasattr(self.gl_3d, 'switch_map'):
+                self.gl_3d.switch_map(map_name)
+        elif action_name == "switch_telemetry_view":
+            view_mode = str(params.get("view", "COCKPIT"))
+            if hasattr(self, '_pilot_telemetry') and hasattr(self._pilot_telemetry, 'set_view_mode'):
+                self._pilot_telemetry.set_view_mode(view_mode)
+        elif action_name == "open_gps_map":
+            self._open_gps_map()
+        elif action_name == "export_report":
+            if hasattr(self, 'db') and self.db and hasattr(self, 'active_session_id') and self.active_session_id:
+                try:
+                    exporter = ReportExporter(self.db)
+                    rpath = exporter.export_html(self.active_session_id)
+                    if rpath:
+                        QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(rpath))
+                except Exception as exc:
+                    print(f"[Main] Report export error: {exc}")
+        elif action_name == "move_forward":
+            self._execute_voice_maneuver("surge", speed, duration)
+        elif action_name == "move_backward":
+            self._execute_voice_maneuver("surge", -speed, duration)
+        elif action_name == "move_left":
+            self._execute_voice_maneuver("sway", -speed, duration)
+        elif action_name == "move_right":
+            self._execute_voice_maneuver("sway", speed, duration)
+        elif action_name == "dive_down":
+            self._execute_voice_maneuver("heave", -speed, duration)
+        elif action_name == "surface_up":
+            self._execute_voice_maneuver("heave", speed, duration)
+        elif action_name == "turn_left":
+            self._execute_voice_maneuver("yaw", -speed, duration)
+        elif action_name == "turn_right":
+            self._execute_voice_maneuver("yaw", speed, duration)
+        elif action_name == "stop_motion":
+            if hasattr(self, '_auto_controller'):
+                self._auto_controller.stop_all()
+            self._reset_voice_maneuver()
+        elif action_name == "speed_up":
+            self._speed_up()
+        elif action_name == "speed_down":
+            self._speed_down()
+        elif action_name == "set_mode":
+            mode = str(params.get("mode", "ALT_HOLD"))
+            self._set_flight_mode(mode)
+        elif action_name == "reset_origin":
+            if hasattr(self, 'gl_3d') and hasattr(self.gl_3d, 'reset_origin'):
+                self.gl_3d.reset_origin()
+
+    def _toggle_recording(self, start: Optional[bool] = None):
+        """Bật hoặc tắt ghi video camera/màn hình."""
+        if start is None:
+            start = not getattr(self, '_is_recording', False)
+        if start and not getattr(self, '_is_recording', False):
+            self._start_recording()
+        elif not start and getattr(self, '_is_recording', False):
+            self._stop_recording()
+
+    def _execute_voice_maneuver(self, axis: str, val: float, duration_s: float = 1.5):
+        """Thực hiện cơ động giọng nói và tự động trả về vị trí trung hoà sau duration_s giây."""
+        self._ctrl[axis] = max(-1.0, min(1.0, float(val)))
+        self._send_mavlink_control()
+        # Timer tự động dừng cơ động
+        QtCore.QTimer.singleShot(int(duration_s * 1000), self._reset_voice_maneuver)
+
+    def _reset_voice_maneuver(self):
+        """Dừng chuyển động cơ động giọng nói và đưa trục về vị trí trung hòa."""
+        self._ctrl = dict(surge=0., sway=0., heave=0., roll=0., pitch=0., yaw=0.)
+        self._send_mavlink_control()
+
+    def _set_flight_mode(self, mode: str):
+        """Chuyển đổi chế độ bay ArduSub và đồng bộ giao diện."""
+        self._flight_mode = mode.upper()
+        if self._mav_worker and hasattr(self._mav_worker, 'set_flight_mode'):
+            self._mav_worker.set_flight_mode(mode)
+        if hasattr(self, 'power_widget') and self.power_widget:
+            self.power_widget.add_log(f"🎮 Chế độ bay: {self._flight_mode}", "INFO")
 
     def _on_ai_model_loaded(self, ok: bool, msg: str):
         print(f"[AI] Model status: {msg}")
@@ -1319,8 +1453,20 @@ class ROVMainWindow(QMainWindow):
 
         self._frame_count += 1
 
-        # ── 1. Keyboard input + Low-pass filter (mượt mà) ────
-        self._update_keyboard_controls()
+        # ── 1. Keyboard input / Autopilot Closed-Loop Trajectory ────
+        if hasattr(self, '_auto_controller') and self._auto_controller.is_active:
+            is_auto, auto_ctrl = self._auto_controller.update_step(
+                dt=1.0 / 60.0,
+                current_pos_ned=self._pos_ned.tolist() if hasattr(self._pos_ned, 'tolist') else list(self._pos_ned),
+                current_depth_m=float(self._depth),
+                current_heading_deg=float(self._heading)
+            )
+            if is_auto:
+                for k in auto_ctrl:
+                    self._ctrl[k] = auto_ctrl[k]
+        else:
+            self._update_keyboard_controls()
+
         alpha = 0.22
         for k in self._ctrl:
             self._smoothed_ctrl[k] = (
@@ -1466,8 +1612,11 @@ class ROVMainWindow(QMainWindow):
         self._dirty_position = True
         # Physics engine cần pose mới nhất để tính step tiếp theo
         if self._physics and self._connected:
-            quat = self._euler_to_quat(self._roll, self._pitch, self._yaw)
-            self._physics.set_external_pose([x, y, z], quat.tolist())
+            try:
+                quat = self._euler_to_quat(self._roll, self._pitch, self._yaw)
+                self._physics.set_external_pose([x, y, z], quat.tolist())
+            except Exception:
+                pass
 
     def _on_vfr_hud(self, depth: float, heading: float, throttle: float):
         """POLLING MODEL: Chỉ buffer."""
@@ -2032,6 +2181,14 @@ class ROVMainWindow(QMainWindow):
         self._frame_timer.stop()
         self._clock_timer.stop()
         self._stop_workers()
+        if hasattr(self, 'gl_3d') and self.gl_3d:
+            try:
+                if hasattr(self.gl_3d, 'clean_up'):
+                    self.gl_3d.clean_up()
+                else:
+                    self.gl_3d.close()
+            except Exception:
+                pass
         if hasattr(self, 'telemetry_logger') and self.telemetry_logger:
             try:
                 self.telemetry_logger.stop()

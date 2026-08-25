@@ -54,13 +54,31 @@ class LocalSLMEngine:
         self._available: Optional[bool] = None
 
     def check_availability(self) -> bool:
-        """Check if local Ollama server is active."""
+        """Kiểm tra máy chủ Ollama và tự động chọn model Qwen tốt nhất đang có."""
         if self._available is not None:
             return self._available
         try:
             req = urllib.request.Request(f"{self._url}/api/tags", headers={"User-Agent": "GCS_ROV"})
-            with urllib.request.urlopen(req, timeout=0.3) as resp:
+            with urllib.request.urlopen(req, timeout=1.2) as resp:
                 if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    installed = [m.get("name", "") for m in data.get("models", [])]
+                    
+                    # Thứ tự ưu tiên model thông minh nhất (Qwen 2.5, Phi-3.5 3.8B, Gemma 2, Llama 3.1)
+                    preference = [
+                        "qwen2.5:14b-instruct", "qwen2.5:14b",
+                        "qwen2.5:7b-instruct", "qwen2.5:7b", "qwen2.5-coder:7b",
+                        "gemma2:9b", "llama3.1:8b",
+                        "phi3.5", "phi3:3.8b", "phi3:mini",
+                        "qwen2.5:3b-instruct", "qwen2.5:3b", "qwen2.5:1.5b"
+                    ]
+                    for cand in preference:
+                        matched = [m for m in installed if cand in m]
+                        if matched:
+                            self._model = matched[0]
+                            break
+
+                    print(f"[LocalSLM] Ollama online. Mô hình tốt nhất được chọn: '{self._model}'")
                     self._available = True
                     return True
         except Exception:
@@ -98,19 +116,22 @@ class LocalSLMEngine:
             "options": {"temperature": 0.1, "num_predict": 250},
         }
 
+        if len(prompt.strip()) < 2 or any(prompt.count(w) >= 4 for w in prompt.split()):
+            return None
+
         try:
             req = urllib.request.Request(
                 f"{self._url}/api/generate",
                 data=json.dumps(payload).encode("utf-8"),
                 headers={"Content-Type": "application/json", "User-Agent": "GCS_ROV"},
             )
-            with urllib.request.urlopen(req, timeout=12.0) as resp:
+            with urllib.request.urlopen(req, timeout=3.5) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode("utf-8"))
                     res_text = data.get("response", "")
                     return json.loads(res_text)
         except Exception as exc:
-            print(f"[LocalSLM] Ollama generate error: {exc}")
+            print(f"[LocalSLM] Ollama generate fallback ({exc}). Using high-speed rule engine.")
         return None
 
 
@@ -209,7 +230,10 @@ class ROVAgentBrain:
         is_hardware_or_telemetry = any(k in text_lower for k in [
             "đèn", "bật", "tắt", "rọi", "arm", "disarm", "động cơ", "ngắt", "khẩn cấp",
             "độ sâu", "điện áp", "pin", "dung lượng", "nhiệt độ", "thông số", "cảm biến",
-            "quy trình", "hướng dẫn", "sop", "chụp ảnh", "lưu ảnh", "snapshot"
+            "quy trình", "hướng dẫn", "sop", "chụp ảnh", "lưu ảnh", "snapshot",
+            "tiến", "lùi", "trái", "phải", "lặn", "nổi", "quay", "rẽ", "dừng", "hãm", "di chuyển",
+            "giữ độ sâu", "thủ công", "ổn định", "gốc toạ độ", "reset", "tăng tốc", "giảm tốc",
+            "vòng tròn", "360", "video", "ghi hình", "camera", "map", "bản đồ", "báo cáo", "cockpit", "table", "rth", "home"
         ])
 
         if is_hardware_or_telemetry:
@@ -302,8 +326,262 @@ class ROVAgentBrain:
             return out, None
 
         # 1. Direct Control & Implicit Intents
+        import re
+
+        def _extract_num(t: str, default: float = 1.0) -> float:
+            match = re.search(r'(\d+(?:[\.,]\d+)?)\s*(?:m\b|mét|met|giây|s\b|%|độ|deg)', t, re.IGNORECASE)
+            if match:
+                val_str = match.group(1).replace(',', '.')
+                try:
+                    return float(val_str)
+                except ValueError:
+                    pass
+            nums = re.findall(r'\d+(?:[\.,]\d+)?', t)
+            if nums:
+                try:
+                    return float(nums[0].replace(',', '.'))
+                except ValueError:
+                    pass
+            return default
+
+        # ── Autonomous Parameterized Navigation ───────────────────────────
+        # Goto Specific Depth (e.g. "lặn xuống 5m", "lặn đến 8 mét")
+        if any(k in text_lower for k in ["lặn xuống", "lặn sâu", "lặn đến", "đến độ sâu"]) and any(c.isdigit() for c in text_lower):
+            target_d = _extract_num(text_lower, default=5.0)
+            action = "goto_depth"
+            speech = f"Target depth set to {target_d:.1f}m. Autonomous depth controller activated." if lang == "en" else f"Đang điều khiển ROV tự động lặn đến độ sâu mục tiêu {target_d:.1f} mét."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"target_depth": target_d}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # Relative Move: Left (e.g. "di chuyển sang trái 2m")
+        elif any(k in text_lower for k in ["sang trái", "dạt trái", "qua trái"]) and any(c.isdigit() for c in text_lower):
+            dist_m = _extract_num(text_lower, default=2.0)
+            action = "relative_move"
+            speech = f"Strafing left by {dist_m:.1f} meters." if lang == "en" else f"Đang điều khiển ROV di chuyển dạt sang trái {dist_m:.1f} mét."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"surge_m": 0.0, "sway_m": -dist_m, "heave_m": 0.0}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # Relative Move: Right (e.g. "sang phải 2m")
+        elif any(k in text_lower for k in ["sang phải", "dạt phải", "qua phải"]) and any(c.isdigit() for c in text_lower):
+            dist_m = _extract_num(text_lower, default=2.0)
+            action = "relative_move"
+            speech = f"Strafing right by {dist_m:.1f} meters." if lang == "en" else f"Đang điều khiển ROV di chuyển dạt sang phải {dist_m:.1f} mét."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"surge_m": 0.0, "sway_m": dist_m, "heave_m": 0.0}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # Relative Move: Forward (e.g. "tiến lên 3m")
+        elif any(k in text_lower for k in ["tiến lên", "tiến tới", "chạy tới"]) and any(c.isdigit() for c in text_lower):
+            dist_m = _extract_num(text_lower, default=2.0)
+            action = "relative_move"
+            speech = f"Moving forward by {dist_m:.1f} meters." if lang == "en" else f"Đang điều khiển ROV tiến lên phía trước {dist_m:.1f} mét."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"surge_m": dist_m, "sway_m": 0.0, "heave_m": 0.0}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # Relative Move: Backward (e.g. "lùi lại 2m")
+        elif any(k in text_lower for k in ["lùi lại", "đi lùi", "chạy lùi"]) and any(c.isdigit() for c in text_lower):
+            dist_m = _extract_num(text_lower, default=2.0)
+            action = "relative_move"
+            speech = f"Moving backward by {dist_m:.1f} meters." if lang == "en" else f"Đang điều khiển ROV lùi lại {dist_m:.1f} mét."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"surge_m": -dist_m, "sway_m": 0.0, "heave_m": 0.0}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # ── Complex Autonomous Trajectory Patterns ────────────────────────
+        # Circle Orbit (e.g. "bay vòng tròn", "lượn vòng tròn bán kính 4m")
+        elif any(k in text_lower for k in ["vòng tròn", "bay vòng", "lượn vòng", "circle"]):
+            radius_m = _extract_num(text_lower, default=3.0)
+            action = "execute_pattern"
+            speech = f"Executing circular orbit pattern with radius {radius_m:.1f}m." if lang == "en" else f"Bắt đầu bài bay lượn vòng tròn tự động bán kính {radius_m:.1f} mét."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"pattern_type": "circle", "radius_m": radius_m}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # 360 Degree Yaw Scan (e.g. "xoay 360 độ", "quét 360")
+        elif any(k in text_lower for k in ["360", "xoay tròn", "quét xung quanh", "scan 360"]):
+            action = "execute_pattern"
+            speech = "Initiating 360-degree panoramic inspection scan." if lang == "en" else "Bắt đầu bài xoay quét 360 độ khảo sát toàn cảnh xung quanh."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"pattern_type": "yaw_scan_360"}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # Return to Home (RTH)
+        elif any(k in text_lower for k in ["về điểm xuất phát", "quay về gốc", "trở về home", "rth", "return to home"]):
+            action = "return_to_home"
+            speech = "Returning to Home origin coordinates." if lang == "en" else "Bắt đầu quy trình tự động quay về toạ độ xuất phát (RTH)."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # ── GCS Software & UI Automation ──────────────────────────────────
+        # Screen / Camera Recording
+        elif any(k in text_lower for k in ["quay video", "ghi hình", "record video", "screen record"]):
+            is_start = not any(k in text_lower for k in ["dừng", "ngừng", "tắt", "stop", "end"])
+            action = "toggle_recording"
+            speech = f"Camera and screen recording {'started' if is_start else 'stopped and saved'}." if lang == "en" else f"Đã {'bắt đầu' if is_start else 'dừng'} ghi video camera và màn hình điều khiển."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"start": is_start}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # 3D Camera Switching
+        elif any(k in text_lower for k in ["chase cam", "bám đuôi", "camera sau"]):
+            action = "switch_3d_camera"
+            speech = "3D Camera mode set to Chase Cam." if lang == "en" else "Đã chuyển camera 3D sang chế độ bám đuôi (Chase Cam)."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"mode": "chase"}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        elif any(k in text_lower for k in ["isometric", "phối cảnh", "góc nhìn 3d"]):
+            action = "switch_3d_camera"
+            speech = "3D Camera mode set to Isometric View." if lang == "en" else "Đã chuyển camera 3D sang góc nhìn Isometric."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"mode": "isometric"}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        elif any(k in text_lower for k in ["bản đồ 3d", "map view", "nhìn từ trên"]):
+            action = "switch_3d_camera"
+            speech = "3D Camera mode set to Top-Down Map View." if lang == "en" else "Đã chuyển camera sang góc nhìn bản đồ từ trên xuống."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"mode": "map"}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # 3D Map Switching
+        elif any(k in text_lower for k in ["hồ chứa", "reservoir"]):
+            action = "switch_3d_map"
+            speech = "3D Environment switched to Reservoir." if lang == "en" else "Đã chuyển bản đồ 3D sang môi trường Hồ chứa (Reservoir)."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"map_name": "RESERVOIR"}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        elif any(k in text_lower for k in ["offshore", "biển sâu", "ngoài khơi"]):
+            action = "switch_3d_map"
+            speech = "3D Environment switched to Offshore." if lang == "en" else "Đã chuyển bản đồ 3D sang môi trường Biển sâu ngoài khơi (Offshore)."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"map_name": "OFFSHORE"}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # Open Google Maps
+        elif any(k in text_lower for k in ["google maps", "bản đồ", "mở map", "định vị gps"]):
+            action = "open_gps_map"
+            speech = "Opening live Google Maps location." if lang == "en" else "Đang mở Google Maps hiển thị vị trí thực tế của ROV."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # Switch Telemetry View
+        elif any(k in text_lower for k in ["bảng raw", "raw table", "bảng số liệu"]):
+            action = "switch_telemetry_view"
+            speech = "Switched to Raw Table view." if lang == "en" else "Đã chuyển sang Bảng số liệu chi tiết (Raw Table)."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"view": "TABLE"}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        elif any(k in text_lower for k in ["cockpit", "phi công", "thẻ trực quan"]):
+            action = "switch_telemetry_view"
+            speech = "Switched to Pilot Cockpit view." if lang == "en" else "Đã chuyển sang Thẻ điều khiển phi công (Pilot Cockpit)."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"view": "COCKPIT"}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # Export Report
+        elif any(k in text_lower for k in ["xuất báo cáo", "lưu báo cáo", "export report"]):
+            action = "export_report"
+            speech = "Exporting dive inspection report." if lang == "en" else "Đang xuất báo cáo kiểm tra lặn sang tệp tin."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # ── Movement & Maneuver Controls ──────────────────────────────────
+        # Forward
+        elif any(k in text_lower for k in ["tiến lên", "tiến tới", "chạy tới", "đi tới", "tiến", "forward", "go ahead"]):
+            action = "move_forward"
+            speech = "Moving forward." if lang == "en" else "Đang điều khiển ROV tiến lên phía trước."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"speed": 0.6, "duration": 1.5}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # Backward
+        elif any(k in text_lower for k in ["lùi lại", "đi lùi", "chạy lùi", "lùi", "backward", "reverse", "back"]):
+            action = "move_backward"
+            speech = "Moving backward." if lang == "en" else "Đang điều khiển ROV lùi lại."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"speed": 0.6, "duration": 1.5}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # Strafe Left
+        elif any(k in text_lower for k in ["sang trái", "dạt trái", "qua trái", "dạt sang trái", "strafe left", "port"]):
+            action = "move_left"
+            speech = "Strafing left." if lang == "en" else "Đang dạt tàu sang mạn trái."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"speed": 0.5, "duration": 1.5}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # Strafe Right
+        elif any(k in text_lower for k in ["sang phải", "dạt phải", "qua phải", "dạt sang phải", "strafe right", "starboard"]):
+            action = "move_right"
+            speech = "Strafing right." if lang == "en" else "Đang dạt tàu sang mạn phải."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"speed": 0.5, "duration": 1.5}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # Dive Down
+        elif any(k in text_lower for k in ["lặn xuống", "chìm xuống", "đi xuống", "lặn sâu", "dive down", "descend", "dive"]):
+            action = "dive_down"
+            speech = "Diving down." if lang == "en" else "Đang điều khiển ROV lặn xuống."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"speed": 0.5, "duration": 1.5}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # Surface Up
+        elif any(k in text_lower for k in ["nổi lên", "lên mặt nước", "trồi lên", "đi lên", "surface", "ascend"]):
+            action = "surface_up"
+            speech = "Surfacing up." if lang == "en" else "Đang điều khiển ROV nổi lên."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"speed": 0.5, "duration": 1.5}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # Turn Left / Yaw -
+        elif any(k in text_lower for k in ["quay trái", "rẽ trái", "ngoặt trái", "xoay trái", "turn left", "yaw left"]):
+            action = "turn_left"
+            speech = "Turning left." if lang == "en" else "Đang quay mũi tàu sang trái."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"speed": 0.5, "duration": 1.2}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # Turn Right / Yaw +
+        elif any(k in text_lower for k in ["quay phải", "rẽ phải", "ngoặt phải", "xoay phải", "turn right", "yaw right"]):
+            action = "turn_right"
+            speech = "Turning right." if lang == "en" else "Đang quay mũi tàu sang phải."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"speed": 0.5, "duration": 1.2}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # Stop Motion
+        elif any(k in text_lower for k in ["dừng lại", "đứng yên", "giữ yên", "hãm lại", "thôi", "stop motion", "hold position", "halt"]):
+            action = "stop_motion"
+            speech = "Stopping all thrusters." if lang == "en" else "Đã dừng chuyển động và hãm chân vịt."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # ── Flight Modes ──────────────────────────────────────────────────
+        elif any(k in text_lower for k in ["giữ độ sâu", "tự giữ độ sâu", "chế độ giữ độ sâu", "alt hold", "depth hold"]):
+            action = "set_mode"
+            speech = "Flight mode set to ALT_HOLD." if lang == "en" else "Đã chuyển sang chế độ tự động Giữ độ sâu (ALT_HOLD)."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"mode": "ALT_HOLD"}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        elif any(k in text_lower for k in ["chế độ thủ công", "lái thủ công", "manual mode"]):
+            action = "set_mode"
+            speech = "Flight mode set to MANUAL." if lang == "en" else "Đã chuyển sang chế độ Lái thủ công (MANUAL)."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"mode": "MANUAL"}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        elif any(k in text_lower for k in ["chế độ ổn định", "tự cân bằng", "stabilize"]):
+            action = "set_mode"
+            speech = "Flight mode set to STABILIZE." if lang == "en" else "Đã chuyển sang chế độ Tự cân bằng (STABILIZE)."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"mode": "STABILIZE"}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # Reset Origin / Home
+        elif any(k in text_lower for k in ["đặt lại gốc", "reset toạ độ", "gốc toạ độ", "set origin", "reset home", "gốc 0"]):
+            action = "reset_origin"
+            speech = "Resetting Home Origin to current position." if lang == "en" else "Đã đặt lại gốc toạ độ Home tại vị trí hiện tại."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # Speed adjustment
+        elif any(k in text_lower for k in ["tăng tốc", "nhanh hơn", "tăng lực đẩy", "speed up"]):
+            action = "speed_up"
+            speech = "Increasing speed scale." if lang == "en" else "Đã tăng độ nhạy vận tốc điều khiển."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        elif any(k in text_lower for k in ["giảm tốc", "chậm lại", "giảm lực đẩy", "speed down", "slow down"]):
+            action = "speed_down"
+            speech = "Decreasing speed scale." if lang == "en" else "Đã giảm độ nhạy vận tốc điều khiển."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # ── Hardware & Actuators ──────────────────────────────────────────
         # Dark room / Spotlight 100%
-        if any(k in text_lower for k in ["tối quá", "tối thui", "không nhìn thấy", "chẳng nhìn rõ", "too dark", "cannot see", "darkness"]):
+        elif any(k in text_lower for k in ["tối quá", "tối thui", "không nhìn thấy", "chẳng nhìn rõ", "too dark", "cannot see", "darkness"]):
             action = "set_lights"
             speech = "Subsea spotlight intensity set to 100%." if lang == "en" else "Đã tăng đèn rọi Subsea lên 100% độ sáng."
             out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"value": 100}), speech_response=speech)
@@ -375,11 +653,17 @@ class ROVAgentBrain:
             out = AgentOutputSchema(intent="telemetry_query", speech_response=speech)
             return out, None
 
-        # Generic Response
-        if lang == "en":
-            speech = f"Received command: '{text}'. Processing pilot request."
+        # Generic Fallback Response
+        if len(text.strip()) > 30 or any(text.count(w) >= 3 for w in text.split()):
+            if lang == "en":
+                speech = "I didn't quite catch that. Could you please repeat your command?"
+            else:
+                speech = "Tớ chưa nghe rõ yêu cầu. Bạn có thể nói lại ngắn gọn hơn không?"
         else:
-            speech = f"Đã nhận lệnh: '{text}'. Đang xử lý yêu cầu của bạn."
+            if lang == "en":
+                speech = f"Received command: '{text}'. Processing pilot request."
+            else:
+                speech = f"Đã nhận lệnh: '{text}'. Đang xử lý yêu cầu của bạn."
         out = AgentOutputSchema(intent="general", speech_response=speech)
         return out, None
 

@@ -283,6 +283,26 @@ class MAVLinkWorker(QThread):
             buttons = (1 << 1)  # bit 1 = Đèn tối đi
         self.send_manual_control(0, 0, 500, 0, buttons)
 
+    def set_flight_mode(self, mode_name: str):
+        """Thay đổi chế độ bay ArduSub (STABILIZE, ALT_HOLD, MANUAL, POSHOLD, etc.)."""
+        if self._mav is None or self._use_mock:
+            return
+        try:
+            from pymavlink import mavutil
+            MODES_MAP = {
+                "STABILIZE": 0, "ACRO": 1, "ALT_HOLD": 2, "AUTO": 3,
+                "GUIDED": 4, "VELHOLD": 5, "SURFACE": 9, "POSHOLD": 16, "MANUAL": 19
+            }
+            mode_id = MODES_MAP.get(mode_name.upper(), 19)
+            self._mav.mav.set_mode_send(
+                self.target_system,
+                mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+                mode_id
+            )
+            print(f"[MAVLink] Flight mode changed to: {mode_name} (ID: {mode_id})")
+        except Exception as e:
+            print(f"[MAVLink] Error setting flight mode: {e}")
+
     # ============================================================
     # NHẬN VÀ PARSE GÓI TIN
     # ============================================================

@@ -138,6 +138,26 @@ class STTWorker(QObject):
                     print(f"[STT-Whisper] Filtered static noise hallucination: '{text_result}'")
                     return ""
 
+                # Filter repeated word loops (e.g. 'thịt thịt thịt thịt...')
+                words = text_result.split()
+                if len(words) >= 4:
+                    consec = 1
+                    is_loop = False
+                    for i in range(1, len(words)):
+                        if words[i].lower() == words[i-1].lower():
+                            consec += 1
+                            if consec >= 4:
+                                is_loop = True
+                                break
+                        else:
+                            consec = 1
+                    if not is_loop and len(words) >= 6:
+                        if len(set(w.lower() for w in words)) / len(words) < 0.40:
+                            is_loop = True
+                    if is_loop:
+                        print(f"[STT-Whisper] Filtered repetitive loop hallucination: '{text_result[:40]}...'")
+                        return ""
+
                 if len(text_result) < 2:
                     return ""
 

@@ -995,10 +995,17 @@ class PyVista3DWidget(QtWidgets.QWidget):
             self._cam_resume_timer.stop()
         else:
             self._update_camera_tracking(self._current_pos, self._heading)
-            self.plotter.render()
-
-        if hasattr(self, "_hud"):
-            self._hud.update_data(cam_mode=CameraMode.LABELS.get(self._cam_mode, "?"))
+    def set_camera_mode_by_name(self, name: str):
+        """Chuyển đổi góc nhìn camera theo tên ('isometric', 'chase', 'orbit', 'map', 'manual')."""
+        mapping = {
+            "isometric": CameraMode.ISOMETRIC,
+            "chase": CameraMode.CHASE,
+            "orbit": CameraMode.ORBIT,
+            "map": CameraMode.MAP,
+            "manual": CameraMode.MANUAL,
+        }
+        mode = mapping.get(str(name).lower(), CameraMode.ISOMETRIC)
+        self._set_camera_mode(mode)
 
     def _reset_camera_view(self):
         """Khôi phục vị trí camera ban đầu."""
@@ -1239,3 +1246,34 @@ class PyVista3DWidget(QtWidgets.QWidget):
         super().resizeEvent(event)
         if hasattr(self, "_hud"):
             self._hud.setGeometry(self.rect())
+
+    def clean_up(self):
+        """Dọn dẹp và giải phóng tài nguyên OpenGL/VTK an toàn trước khi đóng cửa sổ."""
+        if getattr(self, "_is_cleaned_up", False):
+            return
+        self._is_cleaned_up = True
+        try:
+            self._anim_timer.stop()
+            self._cam_resume_timer.stop()
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, "plotter") and self.plotter is not None:
+                if hasattr(self.plotter, "interactor") and self.plotter.interactor:
+                    try:
+                        self.plotter.interactor.RemoveAllObservers()
+                    except Exception:
+                        pass
+                if hasattr(self.plotter, "render_window") and self.plotter.render_window:
+                    try:
+                        self.plotter.render_window.Finalize()
+                    except Exception:
+                        pass
+                self.plotter.close()
+        except Exception:
+            pass
+
+    def closeEvent(self, event):
+        self.clean_up()
+        super().closeEvent(event)
