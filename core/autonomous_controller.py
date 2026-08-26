@@ -70,6 +70,14 @@ class AutonomousController:
         return self._is_active
 
     @property
+    def task_type(self) -> str:
+        return self._task_type
+
+    @property
+    def current_mode(self) -> str:
+        return self._task_type
+
+    @property
     def status_text(self) -> str:
         return self._status_text
 
@@ -168,11 +176,15 @@ class AutonomousController:
         return self._status_text
 
     def stop_all(self):
-        """Hủy bỏ toàn bộ chế độ bay tự động và trả quyền điều khiển về Manual."""
+        """Hủy toàn bộ chế độ bay tự động và dừng hẳn robot."""
         self._is_active = False
         self._task_type = AutonomousTaskType.NONE
         self._status_text = "STANDBY"
         print("[AutoPilot] Autonomous trajectory stopped.")
+
+    def stop(self):
+        """Alias for stop_all."""
+        self.stop_all()
 
     # ──────────────────────────────────────────────────────────
     # 60Hz AUTOPILOT STEP LOOP

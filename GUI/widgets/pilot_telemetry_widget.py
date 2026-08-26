@@ -412,7 +412,12 @@ class PilotTelemetryWidget(QtWidgets.QWidget):
 
         main_layout.addWidget(self._stack)
 
+    @property
+    def view_mode(self) -> str:
+        return "TABLE" if getattr(self, 'btn_mode_table', None) and self.btn_mode_table.isChecked() else "COCKPIT"
+
     def set_view_mode(self, mode: str):
+        self._view_mode = mode
         if mode == "TABLE":
             self.btn_mode_cockpit.setChecked(False)
             self.btn_mode_table.setChecked(True)
@@ -506,18 +511,18 @@ class PilotTelemetryWidget(QtWidgets.QWidget):
     # ──────────────────────────────────────────────────────────
     def update_telemetry(
         self,
-        roll_deg: float,
-        pitch_deg: float,
-        yaw_deg: float,
-        depth_m: float,
-        heading_deg: float,
-        voltage_v: float,
-        current_a: float,
-        vel_x: float,
-        vel_y: float,
-        vel_z: float,
-        throttle_pct: float,
-        pos_ned: list
+        roll_deg: float = 0.0,
+        pitch_deg: float = 0.0,
+        yaw_deg: float = 0.0,
+        depth_m: float = 0.0,
+        heading_deg: float = 0.0,
+        voltage_v: float = 16.8,
+        current_a: float = 0.0,
+        vel_x: float = 0.0,
+        vel_y: float = 0.0,
+        vel_z: float = 0.0,
+        throttle_pct: float = 0.0,
+        pos_ned: list = None
     ):
         """Cập nhật dữ liệu viễn trắc cho cả màn hình Pilot và Raw Table."""
         # 1. Update Pilot Cockpit Canvas

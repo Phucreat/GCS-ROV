@@ -102,7 +102,7 @@ class LocalSLMEngine:
             "3. ĐIỀU KHIỂN PHẦN CỨNG & Ý ĐỊNH NGẦM (Nhiệm vụ 2): Nhận biết cả lệnh trực tiếp ('Bật đèn 80%') lẫn ý định ngầm ('Tối quá' -> set_lights 100, 'Lặn sâu hơn chút' -> depth control). Gọi đúng Tool tương ứng (set_lights, arm_thrusters, disarm_thrusters, emergency_stop, take_snapshot). Với các lệnh nguy hiểm (ARM, DISARM, Ngắt khẩn cấp), yêu cầu xác nhận trước.\n"
             "4. TRUY XUẤT THÔNG SỐ & CẢNH BÁO (Nhiệm vụ 3): Trả lời ngay các câu hỏi viễn trắc ('Đang lặn sâu bao nhiêu?', 'Pin còn bao nhiêu?', 'Nhiệt độ cabin sao rồi?') từ thông số viễn trắc thời gian thực ở trên. Nếu rò rỉ nước hoặc pin thấp, đưa ra cảnh báo an toàn.\n"
             "5. HƯỚNG DẪN QUY TRÌNH & GCS (Nhiệm vụ 4): Sử dụng Tool read_sop(topic=...) khi người dùng hỏi quy trình kiểm tra SOP hoặc cách dùng giao diện GCS.\n\n"
-            "ĐỊNH DẠNG JSON BẮT BUỘC:\n"
+            "ĐỊNH DẠNG JSON BẮT BUỘC (Trường 'intent' bắt buộc phải là một trong: 'control', 'chat', 'query_telemetry', 'query_sop'):\n"
             '{"intent": "chat", "tool_call": null, "speech_response": "Sóng gió trên mặt nước không làm khó được Nexos đâu! Tớ vẫn đang giám sát độ sâu 12.4m rất ổn định, bạn cứ yên tâm giữ vững tay lái nhé!", "requires_confirmation": false}\n'
             '{"intent": "control", "tool_call": {"action": "set_lights", "params": {"value": 100}}, "speech_response": "Tớ đã tăng đèn rọi Subsea lên 100% độ sáng cho bạn quan sát rõ hơn rồi nhé.", "requires_confirmation": false}'
         )
@@ -232,9 +232,9 @@ class ROVAgentBrain:
         # Step 2: High-Precision Deterministic Hardware & Telemetry Engine (0ms Latency Priority)
         text_lower = text_clean.lower()
         is_hardware_or_telemetry = any(k in text_lower for k in [
-            "đèn", "bật", "tắt", "rọi", "arm", "disarm", "động cơ", "ngắt", "khẩn cấp",
-            "độ sâu", "điện áp", "pin", "dung lượng", "nhiệt độ", "thông số", "cảm biến",
-            "quy trình", "hướng dẫn", "sop", "chụp ảnh", "lưu ảnh", "snapshot",
+            "đèn", "bật", "tắt", "rọi", "tối", "sáng", "mờ", "nhìn", "arm", "disarm", "động cơ", "ngắt", "khẩn cấp",
+            "độ sâu", "điện áp", "pin", "dung lượng", "nhiệt độ", "thông số", "cảm biến", "viễn trắc",
+            "quy trình", "hướng dẫn", "sop", "chụp ảnh", "lưu ảnh", "snapshot", "chuyển", "bảng",
             "tiến", "lùi", "trái", "phải", "lặn", "nổi", "quay", "rẽ", "dừng", "hãm", "di chuyển",
             "giữ độ sâu", "thủ công", "ổn định", "gốc toạ độ", "reset", "tăng tốc", "giảm tốc",
             "vòng tròn", "360", "video", "ghi hình", "camera", "map", "bản đồ", "báo cáo", "cockpit", "table", "rth", "home"
@@ -421,36 +421,36 @@ class ROVAgentBrain:
             out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"start": is_start}), speech_response=speech)
             return self._evaluate_safety_and_build(out)
 
-        # 3D Camera Switching
-        elif any(k in text_lower for k in ["chase cam", "bám đuôi", "camera sau"]):
-            action = "switch_3d_camera"
-            speech = "3D Camera mode set to Chase Cam." if lang == "en" else "Đã chuyển camera 3D sang chế độ bám đuôi (Chase Cam)."
-            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"mode": "chase"}), speech_response=speech)
-            return self._evaluate_safety_and_build(out)
-
-        elif any(k in text_lower for k in ["isometric", "phối cảnh", "góc nhìn 3d"]):
-            action = "switch_3d_camera"
-            speech = "3D Camera mode set to Isometric View." if lang == "en" else "Đã chuyển camera 3D sang góc nhìn Isometric."
-            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"mode": "isometric"}), speech_response=speech)
-            return self._evaluate_safety_and_build(out)
-
-        elif any(k in text_lower for k in ["bản đồ 3d", "map view", "nhìn từ trên"]):
-            action = "switch_3d_camera"
-            speech = "3D Camera mode set to Top-Down Map View." if lang == "en" else "Đã chuyển camera sang góc nhìn bản đồ từ trên xuống."
-            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"mode": "map"}), speech_response=speech)
-            return self._evaluate_safety_and_build(out)
-
-        # 3D Map Switching
+        # 3D Map Environment Switching
         elif any(k in text_lower for k in ["hồ chứa", "reservoir"]):
             action = "switch_3d_map"
             speech = "3D Environment switched to Reservoir." if lang == "en" else "Đã chuyển bản đồ 3D sang môi trường Hồ chứa (Reservoir)."
             out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"map_name": "RESERVOIR"}), speech_response=speech)
             return self._evaluate_safety_and_build(out)
 
-        elif any(k in text_lower for k in ["offshore", "biển sâu", "ngoài khơi"]):
+        elif any(k in text_lower for k in ["offshore", "biển sâu", "ngoài khơi", "seabed", "đáy biển"]):
             action = "switch_3d_map"
             speech = "3D Environment switched to Offshore." if lang == "en" else "Đã chuyển bản đồ 3D sang môi trường Biển sâu ngoài khơi (Offshore)."
-            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"map_name": "OFFSHORE"}), speech_response=speech)
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"map_name": "SEABED" if ("seabed" in text_lower or "đáy biển" in text_lower) else "OFFSHORE"}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        # 3D Camera View Switching
+        elif any(k in text_lower for k in ["chase", "bám đuôi", "camera sau", "theo sau"]):
+            action = "switch_3d_camera"
+            speech = "3D Camera mode set to Chase Cam." if lang == "en" else "Đã chuyển camera 3D sang chế độ bám đuôi (Chase Cam)."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"mode": "chase"}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        elif any(k in text_lower for k in ["isometric", "phối cảnh", "góc nhìn 3d", "iso"]):
+            action = "switch_3d_camera"
+            speech = "3D Camera mode set to Isometric View." if lang == "en" else "Đã chuyển camera 3D sang góc nhìn Isometric."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"mode": "isometric"}), speech_response=speech)
+            return self._evaluate_safety_and_build(out)
+
+        elif any(k in text_lower for k in ["nhìn từ trên", "top-down", "topdown", "map view", "camera từ trên"]):
+            action = "switch_3d_camera"
+            speech = "3D Camera mode set to Top-Down Map View." if lang == "en" else "Đã chuyển camera sang góc nhìn bản đồ từ trên xuống."
+            out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"mode": "map"}), speech_response=speech)
             return self._evaluate_safety_and_build(out)
 
         # Open Google Maps
@@ -461,7 +461,7 @@ class ROVAgentBrain:
             return self._evaluate_safety_and_build(out)
 
         # Switch Telemetry View
-        elif any(k in text_lower for k in ["bảng raw", "raw table", "bảng số liệu"]):
+        elif any(k in text_lower for k in ["bảng raw", "raw table", "bảng số liệu", "bảng viễn trắc", "viễn trắc chi tiết", "xem bảng"]):
             action = "switch_telemetry_view"
             speech = "Switched to Raw Table view." if lang == "en" else "Đã chuyển sang Bảng số liệu chi tiết (Raw Table)."
             out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action, params={"view": "TABLE"}), speech_response=speech)
@@ -592,7 +592,7 @@ class ROVAgentBrain:
             return self._evaluate_safety_and_build(out)
 
         # Snapshot
-        elif any(k in text_lower for k in ["chụp ảnh", "chụp hình", "lưu ảnh", "snapshot", "take photo", "capture", "camera"]):
+        elif any(k in text_lower for k in ["chụp ảnh", "chụp hình", "lưu ảnh", "snapshot", "take photo", "capture frame", "bấm máy"]):
             action = "take_snapshot"
             speech = "Snapshot captured and saved to media folder." if lang == "en" else "Đã chụp và lưu ảnh vào thư mục media thành công."
             out = AgentOutputSchema(intent="control", tool_call=AgentToolCall(action=action), speech_response=speech)
