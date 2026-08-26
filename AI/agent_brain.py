@@ -94,7 +94,7 @@ class LocalSLMEngine:
             return None
 
         system_instruction = (
-            "Bạn là VIC - Trợ lý ảo AI chuyên nghiệp đồng hành cùng người vận hành Robot lặn ngầm CNX VIC trên Trạm điều khiển mặt đất (GCS).\n\n"
+            "Bạn là Nexos - Trợ lý ảo AI chuyên nghiệp đồng hành cùng người vận hành Robot lặn ngầm Nexos trên Trạm điều khiển mặt đất (GCS).\n\n"
             f"TRẠNG THÁI VIỄN TRẮC THỜI GIAN THỰC (REAL-TIME TELEMETRY):\n{system_context}\n\n"
             "QUY TẮC PHẢN HỒI NGUYÊN TẮC:\n"
             "1. NĂNG LỰC TRẢ LỜI: Trả lời ngắn gọn (1 - 3 câu), súc tích, tự nhiên để đọc ra loa qua Text-to-Speech (TTS).\n"
@@ -103,7 +103,7 @@ class LocalSLMEngine:
             "4. TRUY XUẤT THÔNG SỐ & CẢNH BÁO (Nhiệm vụ 3): Trả lời ngay các câu hỏi viễn trắc ('Đang lặn sâu bao nhiêu?', 'Pin còn bao nhiêu?', 'Nhiệt độ cabin sao rồi?') từ thông số viễn trắc thời gian thực ở trên. Nếu rò rỉ nước hoặc pin thấp, đưa ra cảnh báo an toàn.\n"
             "5. HƯỚNG DẪN QUY TRÌNH & GCS (Nhiệm vụ 4): Sử dụng Tool read_sop(topic=...) khi người dùng hỏi quy trình kiểm tra SOP hoặc cách dùng giao diện GCS.\n\n"
             "ĐỊNH DẠNG JSON BẮT BUỘC:\n"
-            '{"intent": "chat", "tool_call": null, "speech_response": "Sóng gió trên mặt nước không làm khó được CNX VIC đâu! Tớ vẫn đang giám sát độ sâu 12.4m rất ổn định, bạn cứ yên tâm giữ vững tay lái nhé!", "requires_confirmation": false}\n'
+            '{"intent": "chat", "tool_call": null, "speech_response": "Sóng gió trên mặt nước không làm khó được Nexos đâu! Tớ vẫn đang giám sát độ sâu 12.4m rất ổn định, bạn cứ yên tâm giữ vững tay lái nhé!", "requires_confirmation": false}\n'
             '{"intent": "control", "tool_call": {"action": "set_lights", "params": {"value": 100}}, "speech_response": "Tớ đã tăng đèn rọi Subsea lên 100% độ sáng cho bạn quan sát rõ hơn rồi nhé.", "requires_confirmation": false}'
         )
 
@@ -162,11 +162,15 @@ class ROVAgentBrain:
                 print(f"[AgentBrain] Error loading SOP rules: {e}")
         return []
 
-    WAKE_WORD_ALIASES = ["hey vic", "vic ơi", "trợ lý vic", "cnx vic", "vic", "hey aero", "aero ơi", "aero"]
+    WAKE_WORD_ALIASES = [
+        "hey nexos", "nexos ơi", "trợ lý nexos", "nexos",
+        "hey nexo", "nexo ơi", "nexo",
+        "hey vic", "vic ơi", "cnx vic", "vic"
+    ]
 
     def extract_wake_word(self, text: str) -> Tuple[bool, str]:
         """
-        Check if text contains Wake Word ("Hey VIC", "VIC ơi", "CNX VIC").
+        Check if text contains Wake Word ("Hey Nexos", "Nexos ơi", "Hey VIC").
         Returns (has_wake_word, clean_command_without_wake_word).
         """
         text_clean = text.strip()
@@ -189,7 +193,7 @@ class ROVAgentBrain:
     ) -> Tuple[Optional[AgentOutputSchema], Optional[Dict]]:
         """
         Process pilot voice text input.
-        Strips optional Wake Word prefix ("Hey VIC", "VIC ơi") if present, and executes command.
+        Strips optional Wake Word prefix ("Hey Nexos", "Nexos ơi") if present, and executes command.
         """
         text_clean = text.strip()
         if not text_clean:
@@ -200,8 +204,8 @@ class ROVAgentBrain:
         if command_text:
             text_clean = command_text
         elif has_wake and not command_text:
-            # User just called the assistant name ("Hey VIC" / "VIC ơi")
-            speech = "CNX VIC nghe đây! Bạn cần hỗ trợ gì?"
+            # User just called the assistant name ("Hey Nexos" / "Nexos ơi")
+            speech = "Nexos nghe đây! Bạn cần hỗ trợ gì?"
             out = AgentOutputSchema(intent="chat", speech_response=speech)
             return out, None
 
@@ -311,17 +315,17 @@ class ROVAgentBrain:
 
         # 0. Agent Identity & Friendly Morale Chat
         if any(k in text_lower for k in ["tên gì", "tên là gì", "bạn là ai", "ai đây", "who are you", "who r u", "introduce", "giới thiệu"]):
-            speech = "I am CNX VIC, professional AI Co-Pilot supporting ROV subsea operations." if lang == "en" else "Tôi là CNX VIC, trợ lý ảo AI chuyên nghiệp hỗ trợ vận hành robot lặn ngầm."
+            speech = "I am Nexos, professional AI Co-Pilot supporting ROV subsea operations." if lang == "en" else "Tôi là Nexos, trợ lý ảo AI chuyên nghiệp hỗ trợ vận hành robot lặn ngầm."
             out = AgentOutputSchema(intent="chat", speech_response=speech)
             return out, None
 
         elif any(k in text_lower for k in ["sóng to", "rợn tóc gáy", "sợ quá", "biển xấu", "rough sea", "heavy waves"]):
-            speech = f"Heavy waves can't stop CNX VIC! System depth is stable at {depth:.1f}m." if lang == "en" else f"Sóng lớn không làm khó được CNX VIC đâu! Hệ thống đang giữ độ sâu {depth:.1f}m rất ổn định."
+            speech = f"Heavy waves can't stop Nexos! System depth is stable at {depth:.1f}m." if lang == "en" else f"Sóng lớn không làm khó được Nexos đâu! Hệ thống đang giữ độ sâu {depth:.1f}m rất ổn định."
             out = AgentOutputSchema(intent="chat", speech_response=speech)
             return out, None
 
         elif any(k in text_lower for k in ["mệt quá", "căng thẳng", "đuối quá", "tired", "exhausted"]):
-            speech = "Take a short break, CNX VIC is monitoring all ROV subsystems." if lang == "en" else "Bạn nghỉ tay một chút nhé, CNX VIC đang giám sát toàn bộ hệ thống."
+            speech = "Take a short break, Nexos is monitoring all ROV subsystems." if lang == "en" else "Bạn nghỉ tay một chút nhé, Nexos đang giám sát toàn bộ hệ thống."
             out = AgentOutputSchema(intent="chat", speech_response=speech)
             return out, None
 

@@ -325,8 +325,16 @@ class ROVMainWindow(QMainWindow):
         self._inject_telemetry_table()
         self._setup_telemetry_table()
 
-        # Tự động mở 100% toàn màn hình khi khởi chạy
-        self.showMaximized()
+        # Loại bỏ hoàn toàn khoảng viền thừa (Zero outer margins)
+        if hasattr(self.ui, 'verticalLayout'):
+            self.ui.verticalLayout.setContentsMargins(0, 0, 0, 0)
+            self.ui.verticalLayout.setSpacing(0)
+        if hasattr(self.ui, 'verticalLayout_2'):
+            self.ui.verticalLayout_2.setContentsMargins(0, 0, 0, 0)
+            self.ui.verticalLayout_2.setSpacing(0)
+        if hasattr(self.ui, 'verticalLayout_3'):
+            self.ui.verticalLayout_3.setContentsMargins(0, 0, 0, 0)
+            self.ui.verticalLayout_3.setSpacing(4)
 
         # ── Toast Notification Manager ──────────────────────────
         if HAS_NOTIF:
@@ -789,7 +797,7 @@ class ROVMainWindow(QMainWindow):
                 if pcm_audio is None or len(pcm_audio) < 2400:
                     return
                 if getattr(self, '_is_tts_speaking', False):
-                    print("[Main] Suppressing mic capture while VIC is speaking to prevent speaker echo feedback.")
+                    print("[Main] Suppressing mic capture while Nexos is speaking to prevent speaker echo feedback.")
                     return
                 if getattr(self, '_is_processing_voice', False):
                     print("[Main] Voice worker busy processing previous command. Suppressing concurrent buffer.")
@@ -811,7 +819,7 @@ class ROVMainWindow(QMainWindow):
                             self._ai_panel.lbl_mic_status.setText(f"Mic VAD: 🟢 Speech Detected ({energy:.2f})")
                             self._ai_panel.lbl_mic_status.setStyleSheet("color: #00FF9D; font-weight: bold;")
                         else:
-                            self._ai_panel.lbl_mic_status.setText("Mic VAD: 🟢 Lắng nghe 'Hey VIC' / 'VIC ơi'")
+                            self._ai_panel.lbl_mic_status.setText("Mic VAD: 🟢 Lắng nghe 'Hey Nexos' / 'Nexos ơi'")
                             self._ai_panel.lbl_mic_status.setStyleSheet("color: #00D4FF; font-weight: bold;")
                     else:
                         self._ai_panel.lbl_mic_status.setText("Mic PTT: 🔒 MUTED (NHẤN NÚT ĐỂ NÓI)")
@@ -822,7 +830,7 @@ class ROVMainWindow(QMainWindow):
                 if hasattr(self._ai_panel, 'sig_wake_word_toggled'):
                     def _on_wake_word_toggle(enabled: bool):
                         self._wake_word_enabled = enabled
-                        status_str = "🟢 Lắng nghe 'Hey VIC' / 'VIC ơi'" if enabled else "🔒 MUTED (NHẤN NÚT ĐỂ NÓI)"
+                        status_str = "🟢 Lắng nghe 'Hey Nexos' / 'Nexos ơi'" if enabled else "🔒 MUTED (NHẤN NÚT ĐỂ NÓI)"
                         self._ai_panel.lbl_mic_status.setText(f"Mic VAD: {status_str}")
                     self._ai_panel.sig_wake_word_toggled.connect(_on_wake_word_toggle)
 
@@ -913,13 +921,13 @@ class ROVMainWindow(QMainWindow):
             self._voice_agent_enabled = True
 
             # Giới thiệu tự động khi khởi động phần mềm
-            welcome_text = "Tôi là CNX VIC, trợ lý ảo chuyên nghiệp sẽ hỗ trợ bạn trong suốt quá trình làm việc."
+            welcome_text = "Tôi là Nexos, trợ lý ảo chuyên nghiệp sẽ hỗ trợ bạn trong suốt quá trình làm việc."
             self._tts_worker.speak(welcome_text)
             if self._ai_panel:
                 self._ai_panel.lbl_agent_speech.setText(f"Agent: {welcome_text}")
 
             if hasattr(self, 'power_widget') and self.power_widget:
-                self.power_widget.add_log("🎙 Trợ lý Giọng nói Offline VIC (VAD+STT+SLM+TTS) đã sẵn sàng", "SUCCESS")
+                self.power_widget.add_log("🎙 Trợ lý Giọng nói Offline Nexos (VAD+STT+SLM+TTS) đã sẵn sàng", "SUCCESS")
 
         except Exception as exc:
             print(f"[Main] Error starting Voice Agent: {exc}")
@@ -2299,16 +2307,23 @@ def main():
     window.setWindowTitle("CNC NExora — ROV CONTROL SYSTEM")
 
     # Step 4: AI & Voice Agent
-    splash.set_progress(85, "Spinning up Voice Agent Co-Pilot VIC & YOLOv8 Detectors...")
+    splash.set_progress(85, "Spinning up Voice Agent Co-Pilot Nexos & YOLOv8 Detectors...")
     time.sleep(0.3)
 
     # Step 5: Ready
     splash.set_progress(100, "Ready! Launching GCS Subsea Control Station...")
     time.sleep(0.2)
 
-    # Smooth Fade Out Splash & Show Main Window
-    splash.fade_out(duration_ms=450)
-    window.showMaximized()  # Tự động mở 100% toàn màn hình
+    # Smooth Finish Splash & Launch Main Window (100% Maximized Fullscreen)
+    splash.finish(window, duration_ms=250)
+
+    def _ensure_maximized():
+        window.setWindowState(QtCore.Qt.WindowState.WindowMaximized)
+        window.showMaximized()
+        window.raise_()
+        window.activateWindow()
+
+    QtCore.QTimer.singleShot(350, _ensure_maximized)
 
     sys.exit(app.exec())
 

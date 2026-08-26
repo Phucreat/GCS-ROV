@@ -238,7 +238,7 @@ class FusionSplashScreen(QWidget):
         header_row.addStretch(1)
 
         # Right Enterprise Badge
-        self.lbl_brand_right = QLabel("CNX VIC")
+        self.lbl_brand_right = QLabel("CNC NExos")
         self.lbl_brand_right.setStyleSheet(
             "color: #94A9C4; font-family: 'Segoe UI', sans-serif; font-weight: bold; font-size: 13px; letter-spacing: 1.5px;"
         )
@@ -358,4 +358,29 @@ class FusionSplashScreen(QWidget):
         anim.finished.connect(_on_done)
         anim.start()
         # Keep animation handle alive
+        self._anim = anim
+
+    def finish(self, main_window: QWidget, duration_ms: int = 300) -> None:
+        """Kết thúc màn hình splash và bảo đảm cửa sổ chính bung 100% toàn màn hình."""
+        if hasattr(self, "_slide_timer") and self._slide_timer.isActive():
+            self._slide_timer.stop()
+
+        anim = QPropertyAnimation(self._opacity_effect, b"opacity", self)
+        anim.setDuration(duration_ms)
+        anim.setStartValue(1.0)
+        anim.setEndValue(0.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutQuad)
+
+        def _on_done():
+            self.hide()
+            self.close()
+            if main_window:
+                main_window.setWindowState(Qt.WindowState.WindowMaximized)
+                main_window.showMaximized()
+                main_window.raise_()
+                main_window.activateWindow()
+            self.sig_finished.emit()
+
+        anim.finished.connect(_on_done)
+        anim.start()
         self._anim = anim
