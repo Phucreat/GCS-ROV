@@ -67,6 +67,25 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, 'GUI'))
 
+# ── Global Crash Handler for Commercial Reliability ─────────────────────────
+def _global_crash_handler(exc_type, exc_value, exc_traceback):
+    """Bắt toàn bộ unhandled exception để lưu crash dump mà không làm hỏng dữ liệu."""
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+    import traceback
+    err_str = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    print(f"[CRITICAL CRASH] Unhandled Exception:\n{err_str}")
+    try:
+        from utils.path_utils import get_crash_dump_dir
+        dump_dir = get_crash_dump_dir()
+        dump_path = os.path.join(dump_dir, f"crash_{int(time.time())}.log")
+        with open(dump_path, "w", encoding="utf-8") as f:
+            f.write(f"CNC NExora GCS Crash Dump\nTimestamp: {time.ctime()}\n\n{err_str}")
+    except Exception:
+        pass
+
+sys.excepthook = _global_crash_handler
 
 # --- Import các module tự viết ---
 
@@ -922,7 +941,7 @@ class ROVMainWindow(QMainWindow):
 
             # Giới thiệu tự động khi khởi động phần mềm
             welcome_text = "Tôi là Nexos, trợ lý ảo chuyên nghiệp sẽ hỗ trợ bạn trong suốt quá trình làm việc."
-            self._tts_worker.speak(welcome_text)
+            QtCore.QTimer.singleShot(800, lambda: self._tts_worker.speak(welcome_text))
             if self._ai_panel:
                 self._ai_panel.lbl_agent_speech.setText(f"Agent: {welcome_text}")
 
@@ -1166,14 +1185,7 @@ class ROVMainWindow(QMainWindow):
             if ok:
                 self.power_widget.add_log(f"🧠 {msg}", "SUCCESS")
             else:
-                self.power_widget.add_log(f"❌ AI: {msg}", "ERROR")
-        if not ok:
-            QtWidgets.QMessageBox.warning(
-                self, "AI Load Warning",
-                f"Không thể chạy YOLOv8 AI: {msg}\n\n"
-                "Hãy đảm bảo bạn đã cài đặt ultralytics:\n"
-                "pip install ultralytics"
-            )
+                self.power_widget.add_log(f"ℹ️ {msg}", "INFO")
 
     def _on_ai_detection_toggle(self, enabled: bool):
         if not HAS_AI:
@@ -1812,8 +1824,15 @@ class ROVMainWindow(QMainWindow):
         """Trả về đường dẫn thư mục lưu media, tạo nếu chưa tồn tại."""
         path = self.settings.get('media_save_path', '').strip()
         if not path:
-            path = os.path.join(PROJECT_ROOT, 'media')
-        os.makedirs(path, exist_ok=True)
+            try:
+                from utils.path_utils import get_default_media_dir
+                path = get_default_media_dir()
+            except Exception:
+                path = os.path.join(os.path.expanduser("~"), "Documents", "CNC_NExora_Media")
+        try:
+            os.makedirs(path, exist_ok=True)
+        except Exception:
+            pass
         return path
 
     def _on_camera_button(self):
@@ -2136,7 +2155,12 @@ class ROVMainWindow(QMainWindow):
             return
         self._last_csv_log_time = now
 
-        csv_path = self.settings.get("csv_log_path", "logs/rov_activity.csv")
+        try:
+            from utils.path_utils import get_logs_dir
+            def_csv = os.path.join(get_logs_dir(), "rov_activity.csv")
+        except Exception:
+            def_csv = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "CNC_NExora", "logs", "rov_activity.csv")
+        csv_path = self.settings.get("csv_log_path", "").strip() or def_csv
         try:
             # Tự động tạo thư mục chứa nếu chưa có
             dir_name = os.path.dirname(os.path.abspath(csv_path))
@@ -2297,9 +2321,28 @@ def main():
     splash.set_progress(20, "Initializing MAVLink Protocol Engine & SLAM Receiver...")
     time.sleep(0.3)
 
-    # Step 2: SQLite Telemetry WAL Engine
-    splash.set_progress(45, "Loading SQLite Telemetry Database & WAL Loggers...")
+    # Step 2: SQLite Telemetry WAL Engine & Commercial License Validation
+    splash.set_progress(45, "Validating Commercial License & Telemetry Database...")
     time.sleep(0.3)
+    try:
+        from core.licensing import LicenseManager, LicenseDialog
+        lic_mgr = LicenseManager.get_instance()
+        lic_info = lic_mgr.get_license_info()
+        print(f"[Commercial License] Machine ID: {lic_info.machine_id} | Type: {lic_info.license_type} | Valid: {lic_info.is_valid}")
+        if not lic_info.is_valid:
+            splash.hide()
+            lic_dlg = LicenseDialog()
+            res = lic_dlg.exec()
+            lic_info = lic_mgr.get_license_info()
+            if not lic_info.is_valid:
+                QtWidgets.QMessageBox.critical(
+                    None, "Bản Quyền Hết Hạn",
+                    "Phần mềm CNC NExora GCS chưa được kích hoạt bản quyền hợp lệ.\nVui lòng liên hệ nhà sản xuất để nhận mã bản quyền."
+                )
+                sys.exit(0)
+            splash.show()
+    except Exception as e:
+        print(f"[License] Check warning: {e}")
 
     # Step 3: Instantiate ROVMainWindow
     splash.set_progress(65, "Initializing OpenGL 3D Motion Models & Subsea Canvas...")

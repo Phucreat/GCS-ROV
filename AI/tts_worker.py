@@ -55,10 +55,26 @@ _NEURAL_VOICE_MAP = {
 }
 
 
+_BUNDLED_AUDIO_MAP = [
+    (["tôi là nexos", "trợ lý ảo", "chào bạn", "sẽ hỗ trợ bạn"], "assets/audio/welcome.mp3"),
+    (["nexos nghe", "bạn cần hỗ trợ gì", "tôi có thể giúp"], "assets/audio/wake_response.mp3"),
+    (["kích hoạt hệ thống động cơ", "đã arm", "động cơ bật"], "assets/audio/armed.mp3"),
+    (["ngắt động cơ", "disarm"], "assets/audio/disarmed.mp3"),
+    (["giữ độ sâu", "alt hold", "alt_hold"], "assets/audio/alt_hold.mp3"),
+    (["cân bằng", "stabilize"], "assets/audio/stabilize.mp3"),
+    (["thủ công", "manual"], "assets/audio/manual.mp3"),
+    (["rò rỉ", "khoang điện tử", "leak"], "assets/audio/leak_critical.mp3"),
+    (["điện áp pin", "pin thấp", "nổi lên"], "assets/audio/battery_low.mp3"),
+    (["chụp ảnh"], "assets/audio/take_snapshot.mp3"),
+    (["bắt đầu ghi hình", "ghi video"], "assets/audio/start_recording.mp3"),
+    (["dừng", "lưu file video", "dừng ghi"], "assets/audio/stop_recording.mp3"),
+]
+
+
 class TTSWorker(QThread):
     """
     Background worker thread for offline Text-to-Speech audio synthesis.
-    Supports Piper TTS C++ binary or pyttsx3 fallback.
+    Supports Bundled Neural Voice, Edge TTS cache, Piper TTS, or pyttsx3 fallback.
     """
 
     sig_speech_started = pyqtSignal(str)
@@ -128,21 +144,65 @@ class TTSWorker(QThread):
                 print(f"[TTSWorker] Error in TTS synthesis: {exc}")
 
     def _synthesize_and_play(self, text: str, is_emergency: bool) -> None:
-        """Synthesize text using Fast Offline System SAPI5, Neural TTS, or Piper."""
+        """Synthesize text using Studio Bundled Voice, Edge Neural TTS, or SAPI5."""
         if not text.strip():
             return
 
         lang = getattr(self, "_language", "vi")
         print(f"[TTSWorker] Synthesizing speech ({lang.upper()} | {'EMERGENCY' if is_emergency else 'NORMAL'}): '{text}'")
 
-        # ── Method 1: Pyttsx3 / Windows Native SAPI5 Engine (0ms Latency, 100% Offline) ── #
+        # ── Method 0: Studio Pre-recorded Bundled Voice (0ms Latency, 100% Crisp Studio Sound) ── #
+        text_lower = text.lower()
+        for patterns, rel_path in _BUNDLED_AUDIO_MAP:
+            if any(p in text_lower for p in patterns):
+                try:
+                    from utils.path_utils import get_resource_path
+                    full_path = get_resource_path(rel_path)
+                except Exception:
+                    full_path = os.path.join("assets", "audio", os.path.basename(rel_path))
+                if os.path.exists(full_path):
+                    print(f"[TTSWorker] Playing bundled studio neural voice: {full_path}")
+                    self._play_audio_file(full_path)
+                    return
+
+        # ── Method 1: Local Disk Cache / Edge TTS ── #
+        try:
+            import hashlib
+            target_voice = _NEURAL_VOICE_MAP.get(lang, "vi-VN-HoaiMyNeural")
+            hash_name = hashlib.md5(f"{target_voice}_{text}".encode("utf-8")).hexdigest()
+            try:
+                from utils.path_utils import get_tts_cache_dir
+                cache_dir = get_tts_cache_dir()
+            except Exception:
+                cache_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "CNC_NExora", "cache", "tts")
+                os.makedirs(cache_dir, exist_ok=True)
+            cached_mp3 = os.path.join(cache_dir, f"{hash_name}.mp3")
+
+            if not os.path.exists(cached_mp3):
+                try:
+                    import asyncio
+                    import edge_tts
+                    async def _gen():
+                        communicate = edge_tts.Communicate(text, target_voice)
+                        await communicate.save(cached_mp3)
+                    asyncio.run(_gen())
+                except Exception as net_err:
+                    print(f"[TTSWorker] Edge TTS online fetch warning: {net_err}")
+
+            if os.path.exists(cached_mp3):
+                self._play_audio_file(cached_mp3)
+                return
+        except Exception as exc:
+            print(f"[TTSWorker] Edge TTS speech error: {exc}")
+
+        # ── Method 2: Pyttsx3 / Windows Native SAPI5 Engine Fallback ── #
         try:
             import pyttsx3
             engine = pyttsx3.init()
             engine.setProperty("rate", 175)
             engine.setProperty("volume", 1.0)
 
-            # Match voice strictly by target language (prevent 'vi' substring matching 'daVId')
+            # Match voice strictly by target language
             voices = engine.getProperty("voices")
             matched_voice_id = None
             for v in voices:
@@ -163,34 +223,11 @@ class TTSWorker(QThread):
 
             if matched_voice_id:
                 engine.setProperty("voice", matched_voice_id)
-                engine.say(text)
-                engine.runAndWait()
-                return
+            engine.say(text)
+            engine.runAndWait()
+            return
         except Exception as exc:
             print(f"[TTSWorker] Pyttsx3 SAPI5 speech error: {exc}")
-
-        # ── Method 2: Local Disk Cache / Edge TTS ── #
-        try:
-            import hashlib
-            target_voice = _NEURAL_VOICE_MAP.get(lang, "vi-VN-HoaiMyNeural")
-            hash_name = hashlib.md5(f"{target_voice}_{text}".encode("utf-8")).hexdigest()
-            cache_dir = os.path.join("scratch", "tts_cache")
-            os.makedirs(cache_dir, exist_ok=True)
-            cached_mp3 = os.path.join(cache_dir, f"{hash_name}.mp3")
-
-            if not os.path.exists(cached_mp3):
-                import asyncio
-                import edge_tts
-                async def _gen():
-                    communicate = edge_tts.Communicate(text, target_voice)
-                    await communicate.save(cached_mp3)
-                asyncio.run(_gen())
-
-            if os.path.exists(cached_mp3):
-                self._play_audio_file(cached_mp3)
-                return
-        except Exception as exc:
-            print(f"[TTSWorker] Edge TTS speech error: {exc}")
 
         # Method 3: Piper TTS C++ Engine (Low latency < 50ms)
         if os.path.exists(self._piper_path) and os.path.exists(self._model_path):

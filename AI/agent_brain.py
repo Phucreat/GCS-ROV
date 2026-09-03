@@ -154,9 +154,15 @@ class ROVAgentBrain:
         self.sop_rules = self._load_sop_rules(sop_json_path)
 
     def _load_sop_rules(self, path: str) -> List[Dict]:
-        if os.path.exists(path):
+        try:
+            from utils.path_utils import get_resource_path
+            resolved_path = get_resource_path(path)
+        except Exception:
+            resolved_path = path
+
+        if os.path.exists(resolved_path):
             try:
-                with open(path, "r", encoding="utf-8") as f:
+                with open(resolved_path, "r", encoding="utf-8") as f:
                     return json.load(f).get("sop_procedures", [])
             except Exception as e:
                 print(f"[AgentBrain] Error loading SOP rules: {e}")

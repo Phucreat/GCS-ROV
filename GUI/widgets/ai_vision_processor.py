@@ -241,22 +241,22 @@ class AIVisionProcessor(QThread):
         # ── Lazy import of ultralytics ────────────────────────────────── #
         if self._model is None:
             try:
+                from utils.path_utils import get_resource_path
+                resolved_model_path = get_resource_path(self._model_path)
+            except Exception:
+                resolved_model_path = self._model_path
+
+            try:
                 from ultralytics import YOLO  # type: ignore
-                self._model = YOLO(self._model_path)
+                self._model = YOLO(resolved_model_path)
                 # Warm-up run to JIT-compile and pre-allocate memory
                 dummy = np.zeros((320, 320, 3), dtype=np.uint8)
                 self._model.predict(dummy, verbose=False, device=self._device, imgsz=320)
                 self._model_ready = True
-                self.sig_model_loaded.emit(True, f"Model loaded: {self._model_path}")
-            except ImportError:
-                self.sig_model_loaded.emit(
-                    False,
-                    "ultralytics not installed – pip install ultralytics",
-                )
-                self._running = False
-                return
-            except Exception as exc:  # model file not found etc.
-                self.sig_model_loaded.emit(False, f"Model load error: {exc}")
+                self.sig_model_loaded.emit(True, f"Model loaded: {resolved_model_path}")
+            except Exception as exc:
+                print(f"[AIVisionProcessor] Model load notice: {exc}")
+                self.sig_model_loaded.emit(False, f"AI Vision Model: {exc}")
                 self._running = False
                 return
 

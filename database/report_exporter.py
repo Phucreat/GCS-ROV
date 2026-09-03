@@ -69,6 +69,17 @@ class ReportExporter:
         print(f"[ReportExporter] Full session JSON exported: {output_path}")
         return output_path
 
+    def export_html(self, session_id: str, output_path: Optional[str] = None) -> str:
+        """Alias for export_html_report with automatic safe default path in User Documents."""
+        if not output_path:
+            try:
+                from utils.path_utils import get_default_media_dir
+                media_dir = get_default_media_dir()
+            except Exception:
+                media_dir = os.path.join(os.path.expanduser("~"), "Documents", "CNC_NExora_Media")
+            output_path = os.path.join(media_dir, f"report_{session_id}.html")
+        return self.export_html_report(session_id, output_path)
+
     def export_html_report(self, session_id: str, output_path: str) -> str:
         """Generate an executive HTML Mission Survey Report for clients."""
         session = self.db.get_session_by_id(session_id)

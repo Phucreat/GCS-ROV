@@ -41,11 +41,14 @@ class DatabaseManager:
                 return
 
             if db_path is None:
-                # Default path inside project directory under logs/db/gcs_database.db
-                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                db_dir = os.path.join(base_dir, "logs", "db")
-                os.makedirs(db_dir, exist_ok=True)
-                self.db_path = os.path.join(db_dir, "gcs_database.db")
+                try:
+                    from utils.path_utils import get_db_path
+                    self.db_path = get_db_path()
+                except Exception:
+                    base_dir = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+                    db_dir = os.path.join(base_dir, "CNC_NExora", "logs", "db")
+                    os.makedirs(db_dir, exist_ok=True)
+                    self.db_path = os.path.join(db_dir, "gcs_database.db")
             else:
                 self.db_path = db_path
                 os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)

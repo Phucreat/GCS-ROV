@@ -1,0 +1,44 @@
+﻿THỎA THUẬN GIẤY PHÉP NGƯỜI DÙNG CUỐI (EULA)
+END-USER LICENSE AGREEMENT FOR CNC NEXORA GCS SOFTWARE
+===============================================================================
+BẢN QUYỀN THƯƠNG MẠI CHÍNH THỨC / COMMERCIAL RELEASE EDITION v1.0
+CÔNG TY CÔNG NGHỆ CNC NEXORA (CNC NEXORA TECHNOLOGIES)
+===============================================================================
+
+VUI LÒNG ĐỌC KỸ THỎA THUẬN NÀY TRƯỚC KHI CÀI ĐẶT HOẶC SỬ DỤNG PHẦN MỀM. 
+BẰNG VIỆC CÀI ĐẶT, SAO CHÉP HOẶC SỬ DỤNG PHẦN MỀM "CNC NEXORA GCS", BẠN ĐỒNG Ý
+CHỊU SỰ RÀNG BUỘC BỞI CÁC ĐIỀU KHOẢN VÀ ĐIỀU KIỆN DƯỚI ĐÂY:
+
+1. CẤP PHÉP SỬ DỤNG (GRANT OF LICENSE):
+   - Công ty CNC NExora cấp cho bạn giấy phép sử dụng có giới hạn, không độc quyền
+     để cài đặt và vận hành phần mềm trên trạm điều khiển mặt đất (Ground Control
+     Station) phục vụ điều khiển Robot lặn ngầm (ROV/AUV).
+   - Mỗi License Key chỉ có giá trị kích hoạt cho 01 thiết bị phần cứng duy nhất
+     dựa trên Mã nhận diện phần cứng (Machine ID).
+
+2. BẢO VỆ TÀI SẢN TRÍ TUỆ (INTELLECTUAL PROPERTY RIGHTS):
+   - Toàn bộ quyền sở hữu trí tuệ, bằng sáng chế, bản quyền thuật toán điều khiển
+     phân bổ lực (TAM Matrix), mô phỏng 3D Digital Twin, hệ thống trí tuệ nhân tạo
+     Nexos AI Co-Pilot, và mã nguồn thuộc quyền sở hữu duy nhất của CNC NExora.
+   - NGHIÊM CẤM: Dịch ngược (Decompile), phân tích ngược (Reverse Engineering),
+     thay đổi cấu trúc hoặc phân phối lại mã nguồn trái phép.
+
+3. TRỢ LÝ ẢO VÀ XỬ LÝ DỮ LIỆU CỤC BỘ (LOCAL AI & DATA PRIVACY):
+   - Trợ lý ảo Nexos hoạt động hoàn toàn cục bộ (Local-First Offline Engine) trên
+     thiết bị của bạn, không gửi dữ liệu hình ảnh, video âm thanh hoặc tọa độ lặn
+     lên máy chủ bên thứ ba, đảm bảo an toàn tuyệt đối cho các nhiệm vụ quốc phòng,
+     dầu khí và khảo sát dân sự.
+
+4. AN TOÀN VẬN HÀNH DƯỚI NƯỚC (SAFETY & LIABILITY):
+   - Người vận hành (Pilot) chịu trách nhiệm tuân thủ đầy đủ Quy trình Thao tác
+     Chuẩn (SOP) và giữ an toàn khoảng cách khi ARM/DISARM động cơ chân vịt.
+   - Nhà sản xuất không chịu trách nhiệm đối với các thiệt hại do thao tác sai
+     quy trình của phi công hoặc thiên tai bất khả kháng.
+
+5. HỖ TRỢ KỸ THUẬT & CẬP NHẬT (SUPPORT & UPDATES):
+   - Bản quyền thương mại vĩnh viễn được hưởng các bản cập nhật vá lỗi và hỗ trợ
+     kỹ thuật chính hãng từ CNC NExora Technologies.
+
+===============================================================================
+Bấm "Đồng ý" (I Agree) để tiếp tục quá trình cài đặt phần mềm.
+Copyright (c) 2026 CNC NExora Technologies. All rights reserved.

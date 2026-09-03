@@ -321,12 +321,79 @@ class SettingsDialog(QDialog):
         lbl_vid.setStyleSheet("color: #5B748E; font-size: 10px;")
         form_vid.addRow("", lbl_vid)
 
+        # --- TAB 6: BẢN QUYỀN (LICENSE) ---
+        tab_lic = QWidget()
+        form_lic = QFormLayout(tab_lic)
+
+        try:
+            from core.licensing import LicenseManager
+            lic_mgr = LicenseManager.get_instance()
+            info = lic_mgr.get_license_info()
+            mid_val = lic_mgr.machine_id
+            stat_msg = info.status_message
+            is_val = info.is_valid
+        except Exception:
+            lic_mgr = None
+            mid_val = "N/A"
+            stat_msg = "Chưa kết nối License Engine"
+            is_val = False
+
+        lbl_mid_val = QLabel(mid_val)
+        lbl_mid_val.setStyleSheet("color:#00F0FF; font-family:Consolas; font-weight:bold; font-size:12px;")
+        
+        btn_copy_mid = QtWidgets.QPushButton("📋 Sao chép")
+        btn_copy_mid.setStyleSheet("padding:4px 8px; font-size:11px;")
+        btn_copy_mid.clicked.connect(lambda: (
+            QtWidgets.QApplication.clipboard().setText(mid_val),
+            QtWidgets.QMessageBox.information(self, "Đã sao chép", "Đã sao chép Machine ID vào bộ nhớ tạm!")
+        ))
+        
+        hl_mid = QHBoxLayout()
+        hl_mid.addWidget(lbl_mid_val)
+        hl_mid.addWidget(btn_copy_mid)
+        hl_mid.addStretch()
+        form_lic.addRow("Mã máy (Machine ID):", hl_mid)
+
+        lbl_lic_status = QLabel(stat_msg)
+        lbl_lic_status.setStyleSheet("color:#00FF88; font-weight:bold;" if is_val else "color:#FF4444; font-weight:bold;")
+        form_lic.addRow("Trạng thái:", lbl_lic_status)
+
+        self.ed_license_key = QLineEdit()
+        self.ed_license_key.setPlaceholderText("Dán mã kích hoạt NEXOS-XXXX-... vào đây")
+        
+        btn_act_now = QtWidgets.QPushButton("🚀 Kích hoạt")
+        btn_act_now.setStyleSheet("padding:4px 10px; font-size:11px; font-weight:bold; background:#0052D4; color:white;")
+        
+        def _activate_settings_key():
+            if not lic_mgr:
+                return
+            k = self.ed_license_key.text().strip()
+            if not k:
+                QtWidgets.QMessageBox.warning(self, "Lỗi", "Vui lòng nhập License Key.")
+                return
+            ok, msg = lic_mgr.activate_key(k)
+            if ok:
+                QtWidgets.QMessageBox.information(self, "Thành công", msg)
+                new_info = lic_mgr.get_license_info()
+                lbl_lic_status.setText(new_info.status_message)
+                lbl_lic_status.setStyleSheet("color:#00FF88; font-weight:bold;")
+                self.ed_license_key.clear()
+            else:
+                QtWidgets.QMessageBox.critical(self, "Thất bại", msg)
+
+        btn_act_now.clicked.connect(_activate_settings_key)
+        hl_act = QHBoxLayout()
+        hl_act.addWidget(self.ed_license_key)
+        hl_act.addWidget(btn_act_now)
+        form_lic.addRow("Kích hoạt Key:", hl_act)
+
         # Thêm các tab
         self.tabs.addTab(tab_gen, "General")
         self.tabs.addTab(tab_log, "Logging")
         self.tabs.addTab(tab_ctrl, "Controls")
         self.tabs.addTab(tab_smart, "Autopilot")
         self.tabs.addTab(tab_video, "Video & AI")
+        self.tabs.addTab(tab_lic, "License")
 
         # Dialog Buttons
         btns = QDialogButtonBox(
