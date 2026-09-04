@@ -516,10 +516,13 @@ class ROVMainWindow(QMainWindow):
         webcam_idx = int(self.settings.get('webcam_index', 0))
         vid_file = self.settings.get('video_file', '')
         fps = int(self.settings.get('video_fps', 30))
-        res_str = self.settings.get('video_resolution', '640x480')
-        res_parts = res_str.split('x')
-        target_w, target_h = (int(res_parts[0]), int(
-            res_parts[1])) if len(res_parts) == 2 else (640, 480)
+        res_str = str(self.settings.get('video_resolution', '1280x720')).strip()
+        if res_str.lower() in ('native', 'auto', 'gốc', '0x0'):
+            target_w, target_h = 0, 0
+        else:
+            res_parts = res_str.split('x')
+            target_w, target_h = (int(res_parts[0]), int(
+                res_parts[1])) if len(res_parts) == 2 else (1280, 720)
 
         # Tạo VideoReceiver theo nguồn
         if src == 'udp_h264':
@@ -579,17 +582,24 @@ class ROVMainWindow(QMainWindow):
             self._ar_hud.sig_popout_requested.connect(
                 self._popout_video_window)
 
-        # Kết nối video → HUD + ghi hình
+        # Kết nối video → HUD + ghi hình (chống tồn đọng hàng đợi Qt signal)
+        self._is_rendering_frame = False
         def _on_frame_received(frame):
-            import numpy as _np
-            self._last_frame = frame.copy()
-            self._ar_hud.set_frame(frame)
-            # Ghi video nếu đang recording
-            if self._is_recording and self._video_writer is not None:
-                try:
-                    self._video_writer.write(frame)
-                except Exception:
-                    pass
+            if getattr(self, '_is_rendering_frame', False):
+                return  # Bỏ qua nếu GUI đang vẽ khung hình trước để triệt tiêu trễ
+            self._is_rendering_frame = True
+            try:
+                self._last_frame = frame
+                if self._ar_hud:
+                    self._ar_hud.set_frame(frame)
+                # Ghi video nếu đang recording
+                if self._is_recording and self._video_writer is not None:
+                    try:
+                        self._video_writer.write(frame)
+                    except Exception:
+                        pass
+            finally:
+                self._is_rendering_frame = False
 
         self._video_rx.sig_frame.connect(_on_frame_received)
         self._video_rx.sig_connected.connect(
@@ -2280,7 +2290,7 @@ def main():
         "udp_video_port": 5620,
         "rtsp_url":      "rtsp://192.168.2.2:8554/video",
         "video_fps":     30,
-        "video_resolution": "640x480",
+        "video_resolution": "1280x720",
         "ar_hud_enabled": True,
         "media_save_path": os.path.join(PROJECT_ROOT, "media"),
         # Controls

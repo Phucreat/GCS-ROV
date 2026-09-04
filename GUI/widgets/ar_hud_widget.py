@@ -737,13 +737,13 @@ class ARHUDWidget(QWidget):
         qimg = QImage(rgb.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
         pixmap = QPixmap.fromImage(qimg)
 
-        # Scale giữ tỉ lệ gốc (4:3 / 16:9), không bóp méo, không làm lệch AI box
+        # Scale giữ tỉ lệ gốc (4:3 / 16:9), không bóp méo, không làm lệch AI box (FastTransformation cho 60FPS mượt)
         label_size = self._video_label.size()
         if label_size.width() > 10 and label_size.height() > 10:
             scaled = pixmap.scaled(
                 label_size,
                 Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
+                Qt.TransformationMode.FastTransformation,
             )
             self._video_label.setPixmap(scaled)
 

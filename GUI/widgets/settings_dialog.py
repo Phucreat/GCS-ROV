@@ -281,8 +281,8 @@ class SettingsDialog(QDialog):
         form_vid.addRow("Target FPS:", self.sp_vid_fps)
 
         self.cb_vid_res = QComboBox()
-        self.cb_vid_res.addItems(["320x240", "640x480", "1280x720", "1920x1080"])
-        self.cb_vid_res.setCurrentText(settings.get("video_resolution", "640x480"))
+        self.cb_vid_res.addItems(["1280x720", "Native (Gốc)", "640x480", "1920x1080", "320x240"])
+        self.cb_vid_res.setCurrentText(settings.get("video_resolution", "1280x720"))
         form_vid.addRow("Resolution:", self.cb_vid_res)
 
         self.sw_hud = QToggleSwitch()
