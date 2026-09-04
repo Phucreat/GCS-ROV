@@ -51,10 +51,12 @@ Source: "D:\python\GCS_ROV\3DC.mtl"; DestDir: "{app}"; Flags: ignoreversion
 Source: "D:\python\GCS_ROV\6DC.obj"; DestDir: "{app}"; Flags: ignoreversion
 Source: "D:\python\GCS_ROV\6DC.mtl"; DestDir: "{app}"; Flags: ignoreversion
 Source: "D:\python\GCS_ROV\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "D:\python\GCS_ROV\HUONG_DAN_SU_DUNG_CNC_NEXORA_GCS.pdf"; DestDir: "{app}"; Flags: ignoreversion
 Source: "D:\python\GCS_ROV\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\GUI\img\iconapp.ico"
+Name: "{autoprograms}\{#MyAppName} - Sổ Tay Hướng Dẫn Sử Dụng"; Filename: "{app}\HUONG_DAN_SU_DUNG_CNC_NEXORA_GCS.pdf"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\GUI\img\iconapp.ico"; Tasks: desktopicon
 
 [Run]
