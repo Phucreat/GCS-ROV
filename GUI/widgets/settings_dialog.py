@@ -237,13 +237,11 @@ class SettingsDialog(QDialog):
 
         self.cb_vid_source = QComboBox()
         self.cb_vid_source.addItems([
-            "WebRTC (Ultra Low Latency <80ms - Khuyến nghị ROV)",
-            "RTSP (Pi Camera 8555/cam)",
-            "UDP H.264 (ROV → GCS port 5620)",
-            "Webcam (USB Local)",
-            "Video File",
+            "WebRTC (Ultra Low Latency <80ms - Mặc định ROV)",
+            "RTSP (Pi Camera rtsp://192.168.2.2:8555/cam)",
+            "UDP H.264 (ROV → GCS port 5600)",
         ])
-        src_map = {"webrtc": 0, "rtsp": 1, "udp_h264": 2, "webcam": 3, "file": 4}
+        src_map = {"webrtc": 0, "rtsp": 1, "udp_h264": 2}
         self.cb_vid_source.setCurrentIndex(
             src_map.get(settings.get("video_source", "webrtc"), 0)
         )
@@ -263,24 +261,8 @@ class SettingsDialog(QDialog):
 
         self.sp_udp_port = QSpinBox()
         self.sp_udp_port.setRange(1024, 65535)
-        self.sp_udp_port.setValue(int(settings.get("udp_video_port", 5620)))
+        self.sp_udp_port.setValue(int(settings.get("udp_video_port", 5600)))
         form_vid.addRow("UDP H.264 Port:", self.sp_udp_port)
-
-        self.sp_webcam_idx = QSpinBox()
-        self.sp_webcam_idx.setRange(0, 9)
-        self.sp_webcam_idx.setValue(int(settings.get("webcam_index", 0)))
-        form_vid.addRow("Webcam Index:", self.sp_webcam_idx)
-
-        row_vid_file = QWidget()
-        hl_vid = QHBoxLayout(row_vid_file)
-        hl_vid.setContentsMargins(0, 0, 0, 0)
-        self.ed_vid_file = QLineEdit(settings.get("video_file", ""))
-        self.ed_vid_file.setPlaceholderText("D:/test_video.mp4")
-        btn_vid_browse = QtWidgets.QPushButton("Browse...")
-        btn_vid_browse.clicked.connect(self._browse_video_file)
-        hl_vid.addWidget(self.ed_vid_file)
-        hl_vid.addWidget(btn_vid_browse)
-        form_vid.addRow("Video File Path:", row_vid_file)
 
         self.sp_vid_fps = QSpinBox()
         self.sp_vid_fps.setRange(5, 60)
@@ -319,10 +301,9 @@ class SettingsDialog(QDialog):
 
         # Ghi chú
         lbl_vid = QLabel(
-            "UDP H.264: nhận luồng H.264/RTP từ ROV qua UDP (port 5620).\n"
-            "RTSP: kết nối camera Pi qua mạng.\n"
-            "Webcam: dùng USB camera cắm trực tiếp vào GCS.\n"
-            "Video File: phát lại video để test AI."
+            "WebRTC: Luồng video chính lái siêu mượt 60 FPS, độ trễ < 80ms (Mặc định cho Phi công).\n"
+            "RTSP: Kết nối camera Pi qua mạng rtsp://192.168.2.2:8554/video (Tương thích BlueOS & Cockpit).\n"
+            "UDP H.264: Nhận luồng H.264/RTP trực tiếp từ ROV qua UDP (chuẩn cổng 5600)."
         )
         lbl_vid.setWordWrap(True)
         lbl_vid.setStyleSheet("color: #5B748E; font-size: 10px;")
@@ -663,14 +644,6 @@ class SettingsDialog(QDialog):
         if path:
             self.ed_media_path.setText(path)
 
-    def _browse_video_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Chọn Video File", "",
-            "Video Files (*.mp4 *.avi *.mkv *.mov);;All Files (*)"
-        )
-        if path:
-            self.ed_vid_file.setText(path)
-
     def _browse_logs_folder(self):
         path = QFileDialog.getExistingDirectory(self, "Chọn thư mục lưu Logs & Blackbox")
         if path:
@@ -679,7 +652,7 @@ class SettingsDialog(QDialog):
     def _save_and_accept(self):
         logs_dir  = self.ed_logs.text().strip()
         media_dir = self.ed_media_path.text().strip() or "D:/GCS_ROV_Media"
-        src_list  = ["webrtc", "rtsp", "udp_h264", "webcam", "file"]
+        src_list  = ["webrtc", "rtsp", "udp_h264"]
 
         # Parse GCS lat/lon
         try:
@@ -699,8 +672,6 @@ class SettingsDialog(QDialog):
             "webrtc_url":        self.ed_webrtc_url.text().strip(),
             "udp_video_port":    self.sp_udp_port.value(),
             "rtsp_url":          self.ed_rtsp_url.text().strip(),
-            "webcam_index":      self.sp_webcam_idx.value(),
-            "video_file":        self.ed_vid_file.text().strip(),
             "video_fps":         self.sp_vid_fps.value(),
             "video_resolution":  self.cb_vid_res.currentText(),
             "ar_hud_enabled":    self.sw_hud.isChecked(),

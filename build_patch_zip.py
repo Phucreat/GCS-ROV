@@ -31,10 +31,10 @@ os.makedirs(OUTPUT_PATCHES_DIR, exist_ok=True)
 PATCH_VERSION = "1.1.0"
 RELEASE_DATE = datetime.now().strftime("%Y-%m-%d")
 CHANGELOG = (
-    "1. Tích hợp Camera WebRTC siêu mượt (<80ms, 60 FPS) giải mã phần cứng GPU.\n"
-    "2. Thêm luồng RTSP ngầm 12 FPS cho AI YOLOv8 khi bật AI Detection.\n"
-    "3. Tích hợp kính ngắm AR HUD và Bounding Box neon trên màn hình WebRTC.\n"
-    "4. Sửa cổng kết nối RTSP mặc định thành 8555/cam và WebRTC 8889/cam."
+    "1. Sửa triệt để lỗi không có video trên cả 3 cấu hình WebRTC, RTSP, UDP H.264.\n"
+    "2. Cập nhật RTSP chuẩn cổng 8554 (rtsp://192.168.2.2:8554/video) khớp BlueOS & Cockpit.\n"
+    "3. Sửa giải mã FFmpeg TCP loại bỏ lỗi probesize, tự động quét và duy trì kết nối liên tục.\n"
+    "4. Tối ưu WebRTC QWebEngine cấp quyền media và tự động phát không bị đen màn hình."
 )
 
 # Danh sách các tệp và thư mục đưa vào gói Patch

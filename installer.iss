@@ -2,7 +2,7 @@
 ; CNC NEXORA GCS - COMMERCIAL INNO SETUP SCRIPT
 ; ─────────────────────────────────────────────────────────────────────────────
 #define MyAppName "CNC NExora GCS"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "CNC NExora Technologies"
 #define MyAppURL "https://cncnexora.vn"
 #define MyAppExeName "GCS_ROV.exe"
@@ -20,7 +20,7 @@ DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 LicenseFile=D:\python\GCS_ROV\LICENSE.txt
 OutputDir=D:\python\GCS_ROV\Output
-OutputBaseFilename=Setup_CNC_NExora_GCS_v1.0
+OutputBaseFilename=Setup_CNC_NExora_GCS_v1.1.0
 SetupIconFile=D:\python\GCS_ROV\GUI\img\iconapp.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -31,11 +31,11 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
 UninstallDisplayIcon={app}\{#MyAppExeName}
-VersionInfoVersion=1.0.0.0
+VersionInfoVersion=1.1.0.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=CNC NExora Subsea ROV Ground Control Station
 VersionInfoProductName={#MyAppName}
-VersionInfoProductVersion=1.0.0
+VersionInfoProductVersion=1.1.0
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -52,6 +52,7 @@ Source: "D:\python\GCS_ROV\6DC.obj"; DestDir: "{app}"; Flags: ignoreversion
 Source: "D:\python\GCS_ROV\6DC.mtl"; DestDir: "{app}"; Flags: ignoreversion
 Source: "D:\python\GCS_ROV\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "D:\python\GCS_ROV\HUONG_DAN_SU_DUNG_CNC_NEXORA_GCS.pdf"; DestDir: "{app}"; Flags: ignoreversion
+Source: "D:\python\GCS_ROV\HUONG_DAN_CAP_NHAT_PHAN_MEM_GCS.pdf"; DestDir: "{app}"; Flags: ignoreversion
 Source: "D:\python\GCS_ROV\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]

@@ -127,6 +127,7 @@ class _LiveStreamGrabber(threading.Thread):
         self.read_failed: bool = False
 
     def run(self) -> None:
+        consecutive_fails: int = 0
         while self.running:
             if self.cap is None or not self.cap.isOpened():
                 self.read_failed = True
@@ -134,9 +135,14 @@ class _LiveStreamGrabber(threading.Thread):
 
             ret, frame = self.cap.read()
             if not ret or frame is None:
-                self.read_failed = True
-                break
+                consecutive_fails += 1
+                if consecutive_fails > 25:
+                    self.read_failed = True
+                    break
+                time.sleep(0.005)
+                continue
 
+            consecutive_fails = 0
             with self.lock:
                 self.latest_frame = frame
                 self.has_new_frame = True
@@ -324,6 +330,7 @@ class VideoReceiver(QThread):
             if source_type in (VideoSource.RTSP, VideoSource.UDP_H264, VideoSource.WEBCAM):
                 # ── Luồng mạng / Camera thực: sử dụng Dedicated Fast Grabber để triệt tiêu độ trễ ──
                 grabber = _LiveStreamGrabber(cap)
+                grabber.start()
                 last_emit_t: float = 0.0
                 min_interval: float = 1.0 / max(1, self._target_fps) if self._target_fps > 0 else 0.0
 
@@ -350,15 +357,14 @@ class VideoReceiver(QThread):
                                 break
 
                         reconnect_count += 1
-                        if reconnect_count > _RTSP_MAX_RECONNECTS:
+                        if reconnect_count % 5 == 1:
                             self.sig_error.emit(
-                                f"Mất kết nối luồng video: vượt quá {_RTSP_MAX_RECONNECTS} lần thử lại."
+                                f"Đang chờ tín hiệu video ({url_or_index}). Đang kết nối lại (lần {reconnect_count})..."
                             )
-                            break
 
                         print(
                             f"[VideoReceiver] Đọc luồng video thất bại "
-                            f"(lần {reconnect_count}/{_RTSP_MAX_RECONNECTS}). "
+                            f"(lần {reconnect_count}). "
                             f"Thử kết nối lại sau {_RTSP_RECONNECT_DELAY_S:.1f}s…"
                         )
                         self._interruptible_sleep(cv2, _RTSP_RECONNECT_DELAY_S)
@@ -449,6 +455,15 @@ class VideoReceiver(QThread):
         except Exception as exc:
             print(f"[VideoReceiver] Warning during cap.release(): {exc}")
 
+    def _is_tcp_port_open(self, host: str, port: int, timeout: float = 0.35) -> bool:
+        """Kiểm tra nhanh kết nối TCP tới host:port mà không làm block/treo ứng dụng."""
+        try:
+            import socket
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except Exception:
+            return False
+
     def _open_capture(
         self,
         cv2,
@@ -471,93 +486,97 @@ class VideoReceiver(QThread):
         """
         try:
             if source_type is VideoSource.UDP_H264:
-                # ── UDP Stream / HTTP MJPEG Stream (ROV → GCS) ────────
-                url_str = str(url_or_index)
+                # ── UDP / RTP H.264 Stream (ROV → GCS) ────────
+                url_str = str(url_or_index).strip()
                 cap = None
 
                 import os
                 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
                     "fflags;nobuffer|"
                     "flags;low_delay|"
-                    "max_delay;0|"
-                    "buffer_size;102400"
+                    "framedrop;1"
                 )
 
                 if url_str.startswith("http://") or url_str.startswith("https://"):
-                    # HTTP MJPEG Stream (Giao thức siêu mượt, không lỗi socket)
                     cap = cv2.VideoCapture(url_str)
                 else:
-                    port = int(url_or_index) if url_str.isdigit() else 5620
-                    # Danh sách pipeline thử nghiệm theo thứ tự ưu tiên
-                    pipelines = [
-                        # 1. GStreamer RTP MJPEG (Khớp rtpjpegpay từ Pi 5)
-                        (
-                            f"udpsrc port={port} caps=\"application/x-rtp,media=video,encoding-name=JPEG\" ! "
-                            f"rtpjpegdepay ! jpegdec ! videoconvert ! video/x-raw,format=BGR ! "
-                            f"appsink drop=1 max-buffers=1 sync=false",
-                            cv2.CAP_GSTREAMER
-                        ),
-                        # 2. GStreamer Raw MJPEG (với jpegparse)
-                        (
-                            f"udpsrc port={port} ! jpegparse ! "
-                            f"jpegdec ! videoconvert ! video/x-raw,format=BGR ! "
-                            f"appsink drop=1 max-buffers=1 sync=false",
-                            cv2.CAP_GSTREAMER
-                        ),
-                        # 3. GStreamer MPEG-TS H.264 (Tương thích mpegtsmux cũ)
-                        (
-                            f"udpsrc port={port} buffer-size=524288 ! "
-                            f"tsdemux ! h264parse ! avdec_h264 ! "
-                            f"videoconvert ! video/x-raw,format=BGR ! "
-                            f"appsink drop=1 max-buffers=1 sync=false",
-                            cv2.CAP_GSTREAMER
-                        ),
-                        # 4. FFmpeg UDP Fallback (Zero-Latency)
-                        (
-                            f"udp://0.0.0.0:{port}?overrun_nonfatal=1&fifo_size=1048576&fflags=nobuffer&flags=low_delay",
-                            cv2.CAP_FFMPEG
-                        )
+                    port = int(url_or_index) if url_str.isdigit() else 5600
+                    # Thử lần lượt RTP H.264 (chuẩn BlueOS/QGC) và UDP MPEG-TS
+                    endpoints = [
+                        f"rtp://0.0.0.0:{port}",
+                        f"udp://0.0.0.0:{port}?overrun_nonfatal=1&fifo_size=2097152",
                     ]
-
-                    for pipe_str, api_pref in pipelines:
+                    for ep in endpoints:
                         try:
-                            temp_cap = cv2.VideoCapture(pipe_str, api_pref)
+                            temp_cap = cv2.VideoCapture(ep, cv2.CAP_FFMPEG)
                             if temp_cap is not None:
-                                end_t = time.monotonic() + 0.4
+                                # Chờ tối đa 2.5s để nhận keyframe H.264 đầu tiên
+                                end_t = time.monotonic() + 2.5
                                 while not temp_cap.isOpened() and time.monotonic() < end_t:
-                                    time.sleep(0.04)
+                                    time.sleep(0.05)
 
                                 if temp_cap.isOpened():
                                     cap = temp_cap
+                                    print(f"[VideoReceiver] UDP/RTP đã mở thành công trên {ep}")
                                     break
                                 else:
                                     self._safe_release(temp_cap)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            print(f"[VideoReceiver] UDP open error {ep}: {e}")
 
                 if cap:
                     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
             elif source_type is VideoSource.RTSP:
-                # Cấu hình FFmpeg chuyên sâu: Ép TCP transport (khớp BlueOS Cockpit),
-                # triệt tiêu bộ đệm demuxer, vô hiệu hóa frame reordering để video đạt chuẩn Zero-Latency.
+                # Cấu hình FFmpeg độ trễ cực thấp (<100ms) qua TCP:
+                # Ép TCP transport (khớp Cockpit 100%), loại bỏ probesize;32 gây lỗi giải mã SPS/PPS
                 import os
                 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
                     "rtsp_transport;tcp|"
                     "fflags;nobuffer|"
                     "flags;low_delay|"
-                    "max_delay;0|"
-                    "reorder_queue_size;0|"
-                    "buffer_size;102400|"
-                    "probesize;32|"
-                    "analyzeduration;0|"
-                    "sync;ext"
+                    "max_delay;0"
                 )
                 rtsp_url = str(url_or_index).strip()
-                # Xóa sạch các query params thừa như ?fflags= tránh làm hỏng URI routing của MediaMTX trên BlueOS
                 if "?" in rtsp_url and ("fflags=" in rtsp_url or "flags=" in rtsp_url):
                     rtsp_url = rtsp_url.split("?")[0]
-                cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+
+                # Danh sách ứng viên URL để tự động bắt đúng luồng camera trên BlueOS/Pi
+                candidates = [rtsp_url]
+                if "192.168.2.2" in rtsp_url or "8554" in rtsp_url or "8555" in rtsp_url:
+                    for fallback_url in [
+                        "rtsp://192.168.2.2:8555/cam",
+                        "rtsp://192.168.2.2:8554/video",
+                        "rtsp://192.168.2.2:8554/cam",
+                        "rtsp://192.168.2.2:8554/video_0",
+                    ]:
+                        if fallback_url not in candidates:
+                            candidates.append(fallback_url)
+
+                cap = None
+                for cand_url in candidates:
+                    try:
+                        from urllib.parse import urlparse
+                        parsed = urlparse(cand_url)
+                        h = parsed.hostname or "192.168.2.2"
+                        p = parsed.port or (8555 if "8555" in cand_url else 8554)
+                        # Kiểm tra nhanh socket trong 0.4s tránh bị FFmpeg treo
+                        if not self._is_tcp_port_open(h, p, timeout=0.4):
+                            continue
+
+                        temp_cap = cv2.VideoCapture(cand_url, cv2.CAP_FFMPEG)
+                        if temp_cap is not None and temp_cap.isOpened():
+                            cap = temp_cap
+                            print(f"[VideoReceiver] RTSP đã kết nối thành công: {cand_url}")
+                            if cand_url != rtsp_url:
+                                with self._lock:
+                                    self._url_or_index = cand_url
+                            break
+                        else:
+                            self._safe_release(temp_cap)
+                    except Exception as e:
+                        print(f"[VideoReceiver] Lỗi thử RTSP {cand_url}: {e}")
+
                 if cap is not None:
                     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 

@@ -21,7 +21,7 @@ from typing import List, Optional
 
 from PyQt6.QtCore import QTimer, QUrl, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
-from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEngineSettings
+from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (
     QFrame,
@@ -39,30 +39,29 @@ from PyQt6.QtWidgets import (
 # ---------------------------------------------------------------------------
 _INJECTED_OVERLAY_SCRIPT = """
 (function() {
-    // 1. Reset body and video styling for full-screen low-latency display
-    document.body.style.margin = '0';
-    document.body.style.padding = '0';
-    document.body.style.overflow = 'hidden';
-    document.body.style.backgroundColor = '#040810';
-    document.body.style.display = 'flex';
-    document.body.style.justifyContent = 'center';
-    document.body.style.alignItems = 'center';
-
-    const videos = document.getElementsByTagName('video');
-    for (let v of videos) {
-        v.style.width = '100vw';
-        v.style.height = '100vh';
-        v.style.objectFit = 'contain';
-        v.style.position = 'absolute';
-        v.style.top = '0';
-        v.style.left = '0';
-        v.controls = false;
-        v.muted = true;
-        v.autoplay = true;
-        v.playsInline = true;
-        v.setAttribute('playsinline', '');
-        v.play().catch(e => {});
+    // 1. Force all HTML5 videos to play smoothly and continuously
+    function playAllVideos() {
+        const videos = document.querySelectorAll('video');
+        for (let v of videos) {
+            v.muted = true;
+            v.autoplay = true;
+            v.playsInline = true;
+            v.setAttribute('playsinline', '');
+            v.style.objectFit = 'contain';
+            v.style.width = '100vw';
+            v.style.height = '100vh';
+            if (v.paused) {
+                const p = v.play();
+                if (p && p.catch) {
+                    p.catch(function(e) {});
+                }
+            }
+        }
     }
+    if (!window._playVideoInterval) {
+        window._playVideoInterval = setInterval(playAllVideos, 250);
+    }
+    playAllVideos();
 
     // 2. Create Canvas Overlay for AI Bounding Boxes and HUD
     let canvas = document.getElementById('rov_hud_canvas');
@@ -92,8 +91,12 @@ _INJECTED_OVERLAY_SCRIPT = """
 
     function resizeCanvas() {
         if (canvas) {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
+            const w = window.innerWidth || document.documentElement.clientWidth || (document.body ? document.body.clientWidth : 0) || 1280;
+            const h = window.innerHeight || document.documentElement.clientHeight || (document.body ? document.body.clientHeight : 0) || 720;
+            if (w > 0 && h > 0 && (canvas.width !== w || canvas.height !== h)) {
+                canvas.width = w;
+                canvas.height = h;
+            }
         }
     }
     window.addEventListener('resize', resizeCanvas);
@@ -102,6 +105,9 @@ _INJECTED_OVERLAY_SCRIPT = """
     // 3. Render function
     window.renderRovOverlay = function() {
         if (!canvas) return;
+        if (canvas.width === 0 || canvas.height === 0 || canvas.width !== window.innerWidth) {
+            resizeCanvas();
+        }
         const ctx = canvas.getContext('2d');
         const W = canvas.width;
         const H = canvas.height;
@@ -516,11 +522,27 @@ class WebRTCPlayerWidget(QWidget):
             QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True
         )
 
+        # Tự động cấp quyền truy cập media (WebRTC/Audio/Video)
+        self._web_view.page().featurePermissionRequested.connect(
+            self._handle_feature_permission
+        )
+
         self._web_view.loadFinished.connect(self._on_load_finished)
         main_layout.addWidget(self._web_view, 1)
 
         # Initial Load
         self.load_stream(self._webrtc_url)
+
+    def _handle_feature_permission(self, security_origin, feature):
+        """Tự động cấp quyền Camera/Mic/Media cho WebRTC trên mạng LAN."""
+        try:
+            self._web_view.page().setFeaturePermission(
+                security_origin,
+                feature,
+                QWebEnginePage.PermissionPolicy.PermissionGrantedByUser
+            )
+        except Exception as e:
+            print(f"[WebRTC] Permission grant error: {e}")
 
     # ------------------------------------------------------------------
     # Watchdog & Reconnect
@@ -548,6 +570,8 @@ class WebRTCPlayerWidget(QWidget):
 
             # Inject CSS and HTML5 Canvas Overlay script
             self._web_view.page().runJavaScript(_INJECTED_OVERLAY_SCRIPT)
+            QTimer.singleShot(600, lambda: self._web_view.page().runJavaScript(_INJECTED_OVERLAY_SCRIPT))
+            QTimer.singleShot(1500, lambda: self._web_view.page().runJavaScript(_INJECTED_OVERLAY_SCRIPT))
 
             # Sync existing state
             self._sync_overlay_state()
@@ -565,8 +589,16 @@ class WebRTCPlayerWidget(QWidget):
     def load_stream(self, url: str):
         """Tải địa chỉ WebRTC (ví dụ: http://192.168.2.2:8889/cam)."""
         self._webrtc_url = url.strip()
+        if self._webrtc_url.startswith("rtsp://"):
+            # Nếu người dùng nhập URL RTSP vào ô WebRTC -> tự chuyển sang OpenCV RTSP
+            self.sig_switch_to_native.emit()
+            return
         if self._webrtc_url.startswith("http://") or self._webrtc_url.startswith("https://"):
-            self._web_view.load(QUrl(self._webrtc_url))
+            clean_url = self._webrtc_url
+            if "autoplay=" not in clean_url:
+                sep = "&" if "?" in clean_url else "?"
+                clean_url = f"{clean_url}{sep}autoplay=true&muted=true&controls=false"
+            self._web_view.load(QUrl(clean_url))
         else:
             offline_html = _OFFLINE_HTML_TEMPLATE.format(stream_url=self._webrtc_url)
             self._web_view.setHtml(offline_html)

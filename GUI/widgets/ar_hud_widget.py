@@ -206,11 +206,11 @@ class ARHUDWidget(QWidget):
     Augmented Reality HUD overlay drawn on top of video frames using OpenCV
     with Live Video Filters and Integrated Side Panels.
     """
-    # --- Signals for Action & Filter integration ---
     sig_snapshot_requested = pyqtSignal()
     sig_record_requested = pyqtSignal()
     sig_popout_requested = pyqtSignal()
     sig_filter_changed = pyqtSignal(str)
+    sig_switch_to_webrtc = pyqtSignal()
 
     # Telemetry defaults
     _TELEM_DEFAULTS = dict(
@@ -405,6 +405,23 @@ class ARHUDWidget(QWidget):
         self.btn_popout.clicked.connect(lambda: self.sig_popout_requested.emit())
         dock_lay.addWidget(self.btn_popout)
 
+        # Button: Switch to WebRTC
+        self.btn_switch_webrtc = QPushButton("🌐 WEBRTC")
+        self.btn_switch_webrtc.setToolTip("Chuyển sang luồng WebRTC (<80ms)")
+        self.btn_switch_webrtc.setStyleSheet("""
+            QPushButton {
+                background: rgba(0, 229, 255, 0.15);
+                color: #00E5FF;
+                border: 1px solid #00E5FF;
+            }
+            QPushButton:hover {
+                background: #00E5FF;
+                color: #060B14;
+            }
+        """)
+        self.btn_switch_webrtc.clicked.connect(lambda: self.sig_switch_to_webrtc.emit())
+        dock_lay.addWidget(self.btn_switch_webrtc)
+
         # Separator
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
@@ -444,7 +461,16 @@ class ARHUDWidget(QWidget):
         self._video_label = QLabel(self)
         self._video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._video_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._video_label.setStyleSheet("background-color: #040810; border-radius: 4px;")
+        self._video_label.setText("📹 ĐANG KẾT NỐI CAMERA...\n(Chờ tín hiệu Tether / RTSP 192.168.2.2:8555/cam)")
+        self._video_label.setStyleSheet("""
+            background-color: #040810;
+            color: #5B748E;
+            font-family: 'Rajdhani', 'Segoe UI', sans-serif;
+            font-size: 13px;
+            font-weight: bold;
+            border: 1px solid #14283C;
+            border-radius: 4px;
+        """)
         self._video_label.setMinimumSize(240, 180)
         center_box.addWidget(self._video_label, 1)
 

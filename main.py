@@ -20,11 +20,42 @@ Sơ đồ dữ liệu:
 # ── DYNAMIC PATCH LOADER (Hot-Update Engine) ─────────────────────────
 # Ưu tiên nạp code và tài nguyên từ thư mục patches/ trên đĩa cứng
 # Giúp người dùng cập nhật phần mềm tức thì mà không cần cài lại file .exe 460MB.
+from PyQt6.QtGui import QIcon, QPixmap
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
+    QWidget, QFileDialog, QDialog, QFormLayout, QLineEdit,
+    QDialogButtonBox, QComboBox, QLabel, QSpinBox, QDoubleSpinBox,
+    QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView, QSplitter,
+    QTabWidget
+)
+from PyQt6.QtCore import QTimer, Qt
+from PyQt6 import QtCore, QtGui, QtWidgets
+from typing import Dict, List, Optional, Tuple
+import numpy as np
+import argparse
+import time
+import math
+from GUI.guirov import Ui_MainWindow
+from core.models.rov_6thruster import ROV6ThrusterModel
+from core.models.rov_3thruster import ROV3ThrusterModel
+from core.autonomous_controller import AutonomousController
+from core.physics_engine import PhysicsEngine
+from database import DatabaseManager, AsyncTelemetryLogger, ReportExporter
+from GUI.widgets.blueos_manager import BlueOSManagerWindow
+from GUI.widgets.gl_3d_widget import GLROVWidget
+from GUI.widgets.pyvista_3d_widget import PyVista3DWidget
+from GUI.widgets.gl_compass_3d_widget import GLCompass3DWidget
+from GUI.widgets.pilot_telemetry_widget import PilotTelemetryWidget
+from GUI.widgets.power_widget import PowerWidget
+from network.mavlink_worker import MAVLinkWorker
+from network.slam_udp_receiver import SLAMUDPReceiver
+from GUI.widgets.settings_dialog import SettingsDialog
 import sys
 import os
 from importlib.machinery import PathFinder
 
-_APP_DIR = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__))
+_APP_DIR = os.path.dirname(os.path.abspath(
+    sys.executable if getattr(sys, "frozen", False) else __file__))
 _PATCH_DIR = os.path.join(_APP_DIR, "patches")
 if os.path.isdir(_PATCH_DIR):
     if _PATCH_DIR not in sys.path:
@@ -35,38 +66,6 @@ if os.path.isdir(_PATCH_DIR):
             break
 # ─────────────────────────────────────────────────────────────────────
 
-from GUI.widgets.settings_dialog import SettingsDialog
-from network.slam_udp_receiver import SLAMUDPReceiver
-from network.mavlink_worker import MAVLinkWorker
-from GUI.widgets.power_widget import PowerWidget
-from GUI.widgets.pilot_telemetry_widget import PilotTelemetryWidget
-from GUI.widgets.gl_compass_3d_widget import GLCompass3DWidget
-from GUI.widgets.pyvista_3d_widget import PyVista3DWidget
-from GUI.widgets.gl_3d_widget import GLROVWidget
-from GUI.widgets.blueos_manager import BlueOSManagerWindow
-from database import DatabaseManager, AsyncTelemetryLogger, ReportExporter
-from core.physics_engine import PhysicsEngine
-from core.autonomous_controller import AutonomousController
-from core.models.rov_3thruster import ROV3ThrusterModel
-from core.models.rov_6thruster import ROV6ThrusterModel
-from GUI.guirov import Ui_MainWindow
-import sys
-import math
-import time
-import argparse
-import numpy as np
-import os
-from typing import Dict, List, Optional, Tuple
-from PyQt6 import QtCore, QtGui, QtWidgets
-from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
-    QWidget, QFileDialog, QDialog, QFormLayout, QLineEdit,
-    QDialogButtonBox, QComboBox, QLabel, QSpinBox, QDoubleSpinBox,
-    QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView, QSplitter,
-    QTabWidget
-)
-from PyQt6.QtGui import QIcon, QPixmap
 
 # --- Bản đồ phím bàn phím ---
 KEY_MAP = {
@@ -84,22 +83,27 @@ sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, 'GUI'))
 
 # ── Global Crash Handler for Commercial Reliability ─────────────────────────
+
+
 def _global_crash_handler(exc_type, exc_value, exc_traceback):
     """Bắt toàn bộ unhandled exception để lưu crash dump mà không làm hỏng dữ liệu."""
     if issubclass(exc_type, KeyboardInterrupt):
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
         return
     import traceback
-    err_str = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    err_str = "".join(traceback.format_exception(
+        exc_type, exc_value, exc_traceback))
     print(f"[CRITICAL CRASH] Unhandled Exception:\n{err_str}")
     try:
         from utils.path_utils import get_crash_dump_dir
         dump_dir = get_crash_dump_dir()
         dump_path = os.path.join(dump_dir, f"crash_{int(time.time())}.log")
         with open(dump_path, "w", encoding="utf-8") as f:
-            f.write(f"CNC NExora GCS Crash Dump\nTimestamp: {time.ctime()}\n\n{err_str}")
+            f.write(
+                f"CNC NExora GCS Crash Dump\nTimestamp: {time.ctime()}\n\n{err_str}")
     except Exception:
         pass
+
 
 sys.excepthook = _global_crash_handler
 
@@ -185,7 +189,8 @@ ROV_MODELS = {
 # ==============================================================
 class AgentAsyncWorker(QtCore.QThread):
     """Worker QThread running Whisper STT & Agent Brain LLM off the Qt GUI main thread."""
-    sig_result_ready = QtCore.pyqtSignal(object, object, str)  # (output, immediate_action, cmd_text)
+    sig_result_ready = QtCore.pyqtSignal(
+        object, object, str)  # (output, immediate_action, cmd_text)
 
     def __init__(self, agent_brain, text: str, pcm_audio, stt_worker, telemetry: dict, is_ptt: bool = False, parent=None):
         super().__init__(parent)
@@ -200,12 +205,14 @@ class AgentAsyncWorker(QtCore.QThread):
         try:
             cmd_text = self._text
             if not cmd_text and self._pcm_audio is not None and self._stt_worker:
-                print(f"[AgentAsyncWorker] Transcribing audio buffer ({len(self._pcm_audio)} samples)...")
+                print(
+                    f"[AgentAsyncWorker] Transcribing audio buffer ({len(self._pcm_audio)} samples)...")
                 cmd_text = self._stt_worker.transcribe_audio(self._pcm_audio)
                 print(f"[AgentAsyncWorker] Transcribed text: '{cmd_text}'")
 
             if cmd_text and self._brain:
-                output, immediate_action = self._brain.process_pilot_input(cmd_text, self._telemetry, is_ptt=self._is_ptt)
+                output, immediate_action = self._brain.process_pilot_input(
+                    cmd_text, self._telemetry, is_ptt=self._is_ptt)
                 self.sig_result_ready.emit(output, immediate_action, cmd_text)
             else:
                 self.sig_result_ready.emit(None, None, "")
@@ -237,7 +244,8 @@ class ROVMainWindow(QMainWindow):
         self.ui.pbtn_iconheader.setIcon(QIcon(logo_path))
         self.ui.pbtn_iconheader.setIconSize(QtCore.QSize(45, 45))
         # Logo Phần mềm thanh Taskbar
-        logotaskbar_path = os.path.join(current_dir, "GUI", "img", "logodesktop.png")
+        logotaskbar_path = os.path.join(
+            current_dir, "GUI", "img", "logodesktop.png")
         self.setWindowIcon(QIcon(logotaskbar_path))
 
         self.ui.pbtn_iconheader.setIcon(QIcon(logo_path))
@@ -322,7 +330,8 @@ class ROVMainWindow(QMainWindow):
         self.db = DatabaseManager()
         self.active_session_id = self.db.create_dive_session(
             pilot_name="Pilot Operator",
-            location_name=self.settings.get("location_name", "Offshore Subsea Facility")
+            location_name=self.settings.get(
+                "location_name", "Offshore Subsea Facility")
         )
         self.telemetry_logger = AsyncTelemetryLogger(db_manager=self.db)
         self.telemetry_logger.start(session_id=self.active_session_id)
@@ -492,7 +501,8 @@ class ROVMainWindow(QMainWindow):
         def _show_blueos_manager():
             blueos_ip = self.settings.get("blueos_ip", "192.168.2.2")
             if self._blueos_window is None:
-                self._blueos_window = BlueOSManagerWindow(default_ip=blueos_ip, parent=None)
+                self._blueos_window = BlueOSManagerWindow(
+                    default_ip=blueos_ip, parent=None)
             self._blueos_window.show()
             self._blueos_window.raise_()
             self._blueos_window.activateWindow()
@@ -531,13 +541,15 @@ class ROVMainWindow(QMainWindow):
     def _setup_video_pipeline(self):
         """Khởi tạo video pipeline: WebRTC (Primary <80ms) + ARHUDWidget (OpenCV Native) + AIVisionProcessor."""
         src = self.settings.get('video_source', 'webrtc')
-        webrtc_url = self.settings.get('webrtc_url', 'http://192.168.2.2:8889/cam')
+        webrtc_url = self.settings.get(
+            'webrtc_url', 'http://192.168.2.2:8889/cam')
         rtsp_url = self.settings.get('rtsp_url', 'rtsp://192.168.2.2:8555/cam')
-        udp_port = int(self.settings.get('udp_video_port', 5620))
+        udp_port = int(self.settings.get('udp_video_port', 5600))
         webcam_idx = int(self.settings.get('webcam_index', 0))
         vid_file = self.settings.get('video_file', '')
         fps = int(self.settings.get('video_fps', 30))
-        res_str = str(self.settings.get('video_resolution', '1280x720')).strip()
+        res_str = str(self.settings.get(
+            'video_resolution', '1280x720')).strip()
         if res_str.lower() in ('native', 'auto', 'gốc', '0x0'):
             target_w, target_h = 0, 0
         else:
@@ -550,18 +562,6 @@ class ROVMainWindow(QMainWindow):
             self._video_rx = VideoReceiver(
                 source_type=VideoSource.UDP_H264,
                 url_or_index=udp_port,
-                target_fps=fps, target_w=target_w, target_h=target_h
-            )
-        elif src == 'webcam':
-            self._video_rx = VideoReceiver(
-                source_type=VideoSource.WEBCAM,
-                url_or_index=webcam_idx,
-                target_fps=fps, target_w=target_w, target_h=target_h
-            )
-        elif src == 'file':
-            self._video_rx = VideoReceiver(
-                source_type=VideoSource.FILE,
-                url_or_index=vid_file,
                 target_fps=fps, target_w=target_w, target_h=target_h
             )
         else:  # rtsp hoặc webrtc (dùng RTSP cho OpenCV fallback)
@@ -578,7 +578,8 @@ class ROVMainWindow(QMainWindow):
             cam_layout = self.ui.verticalLayout_5
 
             # Tạo QStackedWidget chứa cả WebRTC (siêu mượt) và AR HUD OpenCV
-            self._video_stack = QtWidgets.QStackedWidget(parent=self.ui.frm_simulate_camera)
+            self._video_stack = QtWidgets.QStackedWidget(
+                parent=self.ui.frm_simulate_camera)
 
             # Slot 0: WebRTC Player Widget (Ưu tiên số 1: <80ms, 60fps)
             self._webrtc_widget = WebRTCPlayerWidget(
@@ -615,19 +616,28 @@ class ROVMainWindow(QMainWindow):
 
         # Kết nối WebRTC signals
         if self._webrtc_widget:
-            self._webrtc_widget.sig_snapshot_requested.connect(self._take_snapshot)
-            self._webrtc_widget.sig_record_requested.connect(self._on_camera_button)
-            self._webrtc_widget.sig_popout_requested.connect(self._popout_video_window)
-            self._webrtc_widget.sig_switch_to_native.connect(self._switch_to_native_video)
+            self._webrtc_widget.sig_snapshot_requested.connect(
+                self._take_snapshot)
+            self._webrtc_widget.sig_record_requested.connect(
+                self._on_camera_button)
+            self._webrtc_widget.sig_popout_requested.connect(
+                self._popout_video_window)
+            self._webrtc_widget.sig_switch_to_native.connect(
+                self._switch_to_native_video)
 
         # Kết nối AR HUD signals
         if self._ar_hud:
             self._ar_hud.sig_snapshot_requested.connect(self._take_snapshot)
             self._ar_hud.sig_record_requested.connect(self._on_camera_button)
-            self._ar_hud.sig_popout_requested.connect(self._popout_video_window)
+            self._ar_hud.sig_popout_requested.connect(
+                self._popout_video_window)
+            if hasattr(self._ar_hud, 'sig_switch_to_webrtc'):
+                self._ar_hud.sig_switch_to_webrtc.connect(
+                    self._switch_to_webrtc_video)
 
         # Kết nối video → HUD + ghi hình (chống tồn đọng hàng đợi Qt signal)
         self._is_rendering_frame = False
+
         def _on_frame_received(frame):
             if getattr(self, '_is_rendering_frame', False):
                 return  # Bỏ qua nếu GUI đang vẽ khung hình trước để triệt tiêu trễ
@@ -684,8 +694,8 @@ class ROVMainWindow(QMainWindow):
                 btn_ai.clicked.connect(self._show_ai_control_panel)
                 hdr_layout.insertWidget(idx, btn_ai)
 
-        # Chỉ khởi động OpenCV VideoReceiver nếu nguồn được chọn không phải WebRTC
-        if src != 'webrtc':
+        # Khởi động OpenCV VideoReceiver chạy ngầm (phục vụ AI YOLO, AR HUD và cửa sổ phụ)
+        if self._video_rx and not self._video_rx.isRunning():
             self._video_rx.start()
 
     def _switch_to_webrtc_video(self):
@@ -693,11 +703,10 @@ class ROVMainWindow(QMainWindow):
         if hasattr(self, '_video_stack') and self._video_stack and self._webrtc_widget:
             self._video_stack.setCurrentIndex(0)
             self.settings['video_source'] = 'webrtc'
-            if self._video_rx and self._video_rx.isRunning():
-                self._video_rx.stop()
             self._webrtc_widget.reload_stream()
             if hasattr(self, 'power_widget') and self.power_widget:
-                self.power_widget.add_log("🌐 Đã chuyển sang WebRTC Live Feed (<80ms)", "SUCCESS")
+                self.power_widget.add_log(
+                    "🌐 Đã chuyển sang WebRTC Live Feed (<80ms)", "SUCCESS")
 
     def _switch_to_native_video(self):
         """Chuyển sang luồng OpenCV Native (Webcam, File hoặc UDP)."""
@@ -707,7 +716,8 @@ class ROVMainWindow(QMainWindow):
             if self._video_rx and not self._video_rx.isRunning():
                 self._video_rx.start()
             if hasattr(self, 'power_widget') and self.power_widget:
-                self.power_widget.add_log("📹 Đã chuyển sang OpenCV Native Feed", "INFO")
+                self.power_widget.add_log(
+                    "📹 Đã chuyển sang OpenCV Native Feed", "INFO")
 
     def _on_quick_video_source_changed(self, index: int):
         """Đổi nhanh nguồn Video trực tiếp từ ComboBox trên GUI chính."""
@@ -726,7 +736,7 @@ class ROVMainWindow(QMainWindow):
             src_name = f"ROV UDP Stream (Port {port})"
         elif index == 2:  # RTSP
             url = self.settings.get(
-                'rtsp_url', 'rtsp://192.168.2.2:8554/video')
+                'rtsp_url', 'rtsp://192.168.2.2:8555/cam')
             self.settings['video_source'] = 'rtsp'
             self._video_rx.set_source(VideoSource.RTSP, url)
             src_name = "RTSP Stream"
@@ -764,6 +774,10 @@ class ROVMainWindow(QMainWindow):
             self._popout_dialog.raise_()
             self._popout_dialog.activateWindow()
             return
+
+        if self._video_rx and not self._video_rx.isRunning():
+            self._video_rx.start()
+
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("📹 Live Camera Feed + AR HUD (Cửa sổ lớn)")
         dlg.resize(960, 600)
@@ -799,7 +813,8 @@ class ROVMainWindow(QMainWindow):
     def _show_ai_control_panel(self):
         """Mở bảng điều khiển AI Control Panel (Voice Agent + YOLO Vision)."""
         if not HAS_AI:
-            QtWidgets.QMessageBox.warning(self, "AI Unavailable", "Thư viện AI chưa được cài đặt.")
+            QtWidgets.QMessageBox.warning(
+                self, "AI Unavailable", "Thư viện AI chưa được cài đặt.")
             return
         if self._ai_panel is None:
             self._setup_ai_pipeline()
@@ -829,7 +844,8 @@ class ROVMainWindow(QMainWindow):
         if self._ar_hud:
             self._ai_proc.sig_detections.connect(self._ar_hud.set_detections)
         if getattr(self, '_webrtc_widget', None):
-            self._ai_proc.sig_detections.connect(self._webrtc_widget.set_detections)
+            self._ai_proc.sig_detections.connect(
+                self._webrtc_widget.set_detections)
         # Kết nối: track error → MAVLink yaw/pitch offset
         self._ai_proc.sig_track_error.connect(self._on_track_error)
         # AI control panel (cửa sổ nổi)
@@ -866,7 +882,8 @@ class ROVMainWindow(QMainWindow):
         print("[Main] Initializing Local-First Voice Co-Pilot Agent...")
         try:
             self._ipc_bus = IPCBus()
-            self._agent_brain = ROVAgentBrain(sop_json_path="AI/sop_rules.json")
+            self._agent_brain = ROVAgentBrain(
+                sop_json_path="AI/sop_rules.json")
             self._stt_worker = STTWorker(language="vi")
             self._tts_worker = TTSWorker()
             self._vad_worker = VADWorker()
@@ -884,7 +901,8 @@ class ROVMainWindow(QMainWindow):
             def _on_tts_speech_finish():
                 def _unmute():
                     self._is_tts_speaking = False
-                    print(f"[Main] TTS audio playback finished. Mic capture unmuted.")
+                    print(
+                        f"[Main] TTS audio playback finished. Mic capture unmuted.")
                 QtCore.QTimer.singleShot(300, _unmute)
 
             self._tts_worker.sig_speech_started.connect(_on_tts_speech_start)
@@ -895,14 +913,18 @@ class ROVMainWindow(QMainWindow):
                 if pcm_audio is None or len(pcm_audio) < 2400:
                     return
                 if getattr(self, '_is_tts_speaking', False):
-                    print("[Main] Suppressing mic capture while Nexos is speaking to prevent speaker echo feedback.")
+                    print(
+                        "[Main] Suppressing mic capture while Nexos is speaking to prevent speaker echo feedback.")
                     return
                 if getattr(self, '_is_processing_voice', False):
-                    print("[Main] Voice worker busy processing previous command. Suppressing concurrent buffer.")
+                    print(
+                        "[Main] Voice worker busy processing previous command. Suppressing concurrent buffer.")
                     return
 
-                print(f"[Main] Captured audio speech clip ({len(pcm_audio)} samples). Dispatching to STT...")
-                self._process_pilot_voice_command(text="", pcm_audio=pcm_audio, is_ptt=True)
+                print(
+                    f"[Main] Captured audio speech clip ({len(pcm_audio)} samples). Dispatching to STT...")
+                self._process_pilot_voice_command(
+                    text="", pcm_audio=pcm_audio, is_ptt=True)
 
             self._vad_worker.sig_speech_end.connect(_on_speech_captured)
 
@@ -910,18 +932,26 @@ class ROVMainWindow(QMainWindow):
             if self._ai_panel:
                 def _on_vad_status(is_speaking, energy):
                     if getattr(self, '_ptt_active', False):
-                        self._ai_panel.lbl_mic_status.setText(f"Mic PTT: 🟢 ĐANG THU ÂM (NHẤN GIỮ)... ({energy:.2f})")
-                        self._ai_panel.lbl_mic_status.setStyleSheet("color: #00FF9D; font-weight: bold;")
+                        self._ai_panel.lbl_mic_status.setText(
+                            f"Mic PTT: 🟢 ĐANG THU ÂM (NHẤN GIỮ)... ({energy:.2f})")
+                        self._ai_panel.lbl_mic_status.setStyleSheet(
+                            "color: #00FF9D; font-weight: bold;")
                     elif getattr(self, '_wake_word_enabled', True):
                         if is_speaking:
-                            self._ai_panel.lbl_mic_status.setText(f"Mic VAD: 🟢 Speech Detected ({energy:.2f})")
-                            self._ai_panel.lbl_mic_status.setStyleSheet("color: #00FF9D; font-weight: bold;")
+                            self._ai_panel.lbl_mic_status.setText(
+                                f"Mic VAD: 🟢 Speech Detected ({energy:.2f})")
+                            self._ai_panel.lbl_mic_status.setStyleSheet(
+                                "color: #00FF9D; font-weight: bold;")
                         else:
-                            self._ai_panel.lbl_mic_status.setText("Mic VAD: 🟢 Lắng nghe 'Hey Nexos' / 'Nexos ơi'")
-                            self._ai_panel.lbl_mic_status.setStyleSheet("color: #00D4FF; font-weight: bold;")
+                            self._ai_panel.lbl_mic_status.setText(
+                                "Mic VAD: 🟢 Lắng nghe 'Hey Nexos' / 'Nexos ơi'")
+                            self._ai_panel.lbl_mic_status.setStyleSheet(
+                                "color: #00D4FF; font-weight: bold;")
                     else:
-                        self._ai_panel.lbl_mic_status.setText("Mic PTT: 🔒 MUTED (NHẤN NÚT ĐỂ NÓI)")
-                        self._ai_panel.lbl_mic_status.setStyleSheet("color: #94A9C4;")
+                        self._ai_panel.lbl_mic_status.setText(
+                            "Mic PTT: 🔒 MUTED (NHẤN NÚT ĐỂ NÓI)")
+                        self._ai_panel.lbl_mic_status.setStyleSheet(
+                            "color: #94A9C4;")
 
                 self._vad_worker.sig_vad_status.connect(_on_vad_status)
 
@@ -929,12 +959,15 @@ class ROVMainWindow(QMainWindow):
                     def _on_wake_word_toggle(enabled: bool):
                         self._wake_word_enabled = enabled
                         status_str = "🟢 Lắng nghe 'Hey Nexos' / 'Nexos ơi'" if enabled else "🔒 MUTED (NHẤN NÚT ĐỂ NÓI)"
-                        self._ai_panel.lbl_mic_status.setText(f"Mic VAD: {status_str}")
-                    self._ai_panel.sig_wake_word_toggled.connect(_on_wake_word_toggle)
+                        self._ai_panel.lbl_mic_status.setText(
+                            f"Mic VAD: {status_str}")
+                    self._ai_panel.sig_wake_word_toggled.connect(
+                        _on_wake_word_toggle)
 
                 if hasattr(self._ai_panel, 'sig_language_changed'):
                     def _on_language_changed(lang_code: str):
-                        print(f"[Main] Switching Voice Agent language to: '{lang_code}'")
+                        print(
+                            f"[Main] Switching Voice Agent language to: '{lang_code}'")
                         if self._tts_worker and hasattr(self._tts_worker, 'set_language'):
                             self._tts_worker.set_language(lang_code)
                         if self._stt_worker and hasattr(self._stt_worker, 'set_language'):
@@ -943,17 +976,22 @@ class ROVMainWindow(QMainWindow):
                             self._agent_brain.set_language(lang_code)
 
                         lang_name = "Tiếng Việt 🇻🇳" if lang_code == "vi" else "English 🇺🇸" if lang_code == "en" else lang_code.upper()
-                        self._ai_panel.lbl_agent_speech.setText(f"Agent: Ready ({lang_name})")
+                        self._ai_panel.lbl_agent_speech.setText(
+                            f"Agent: Ready ({lang_name})")
 
-                    self._ai_panel.sig_language_changed.connect(_on_language_changed)
+                    self._ai_panel.sig_language_changed.connect(
+                        _on_language_changed)
                     # Enforce default: Tiếng Việt ("vi")
                     _on_language_changed("vi")
 
                 # Connect UI Safety confirmation buttons, Text command input & Push-To-Talk
-                self._ai_panel.btn_confirm_action.clicked.connect(lambda: self._process_pilot_voice_command("Xác nhận"))
-                self._ai_panel.btn_cancel_action.clicked.connect(lambda: self._process_pilot_voice_command("Hủy"))
+                self._ai_panel.btn_confirm_action.clicked.connect(
+                    lambda: self._process_pilot_voice_command("Xác nhận"))
+                self._ai_panel.btn_cancel_action.clicked.connect(
+                    lambda: self._process_pilot_voice_command("Hủy"))
                 if hasattr(self._ai_panel, 'sig_voice_command_submitted'):
-                    self._ai_panel.sig_voice_command_submitted.connect(self._process_pilot_voice_command)
+                    self._ai_panel.sig_voice_command_submitted.connect(
+                        self._process_pilot_voice_command)
 
                 if hasattr(self._ai_panel, 'sig_voice_agent_enabled'):
                     def _on_voice_agent_toggle(enabled: bool):
@@ -963,11 +1001,15 @@ class ROVMainWindow(QMainWindow):
                                 self._vad_worker.start()
                             if self._tts_worker and not self._tts_worker.isRunning():
                                 self._tts_worker.start()
-                            self._ai_panel.lbl_mic_status.setText("Mic PTT: 🔒 MUTED (NHẤN NÚT ĐỂ NÓI)")
-                            self._ai_panel.lbl_mic_status.setStyleSheet("color: #94A9C4;")
-                            self._ai_panel.lbl_agent_speech.setText("Agent: Voice Agent ON (Push-To-Talk Ready)")
+                            self._ai_panel.lbl_mic_status.setText(
+                                "Mic PTT: 🔒 MUTED (NHẤN NÚT ĐỂ NÓI)")
+                            self._ai_panel.lbl_mic_status.setStyleSheet(
+                                "color: #94A9C4;")
+                            self._ai_panel.lbl_agent_speech.setText(
+                                "Agent: Voice Agent ON (Push-To-Talk Ready)")
                             if hasattr(self, 'power_widget') and self.power_widget:
-                                self.power_widget.add_log("🎙 Trợ lý Giọng nói đã BẬT (Push-To-Talk)", "SUCCESS")
+                                self.power_widget.add_log(
+                                    "🎙 Trợ lý Giọng nói đã BẬT (Push-To-Talk)", "SUCCESS")
                         else:
                             if self._vad_worker:
                                 self._vad_worker.stop()
@@ -978,26 +1020,35 @@ class ROVMainWindow(QMainWindow):
                                         self._tts_worker._speech_queue.get_nowait()
                                     except Exception:
                                         break
-                            self._ai_panel.lbl_mic_status.setText("Mic PTT: ⏸ DISABLED (TẮT)")
-                            self._ai_panel.lbl_mic_status.setStyleSheet("color: #FF5252; font-weight: bold;")
-                            self._ai_panel.lbl_agent_speech.setText("Agent: Voice Agent OFF (TẮT)")
+                            self._ai_panel.lbl_mic_status.setText(
+                                "Mic PTT: ⏸ DISABLED (TẮT)")
+                            self._ai_panel.lbl_mic_status.setStyleSheet(
+                                "color: #FF5252; font-weight: bold;")
+                            self._ai_panel.lbl_agent_speech.setText(
+                                "Agent: Voice Agent OFF (TẮT)")
                             if hasattr(self, 'power_widget') and self.power_widget:
-                                self.power_widget.add_log("⏸ Trợ lý Giọng nói đã TẮT", "WARNING")
+                                self.power_widget.add_log(
+                                    "⏸ Trợ lý Giọng nói đã TẮT", "WARNING")
 
-                    self._ai_panel.sig_voice_agent_enabled.connect(_on_voice_agent_toggle)
+                    self._ai_panel.sig_voice_agent_enabled.connect(
+                        _on_voice_agent_toggle)
 
                 if hasattr(self._ai_panel, 'sig_ptt_pressed'):
                     def _on_ptt_pressed():
                         if getattr(self, '_voice_agent_enabled', True):
                             self._ptt_active = True
-                            self._ai_panel.lbl_mic_status.setText("Mic PTT: 🟢 ĐANG THU ÂM (NHẤN GIỮ)...")
-                            self._ai_panel.lbl_mic_status.setStyleSheet("color: #00FF9D; font-weight: bold;")
+                            self._ai_panel.lbl_mic_status.setText(
+                                "Mic PTT: 🟢 ĐANG THU ÂM (NHẤN GIỮ)...")
+                            self._ai_panel.lbl_mic_status.setStyleSheet(
+                                "color: #00FF9D; font-weight: bold;")
 
                     def _on_ptt_released():
                         if getattr(self, '_voice_agent_enabled', True):
                             self._ptt_active = False
-                            self._ai_panel.lbl_mic_status.setText("Mic PTT: 🔒 MUTED (NHẤN NÚT ĐỂ NÓI)")
-                            self._ai_panel.lbl_mic_status.setStyleSheet("color: #94A9C4;")
+                            self._ai_panel.lbl_mic_status.setText(
+                                "Mic PTT: 🔒 MUTED (NHẤN NÚT ĐỂ NÓI)")
+                            self._ai_panel.lbl_mic_status.setStyleSheet(
+                                "color: #94A9C4;")
 
                     self._ai_panel.sig_ptt_pressed.connect(_on_ptt_pressed)
                     self._ai_panel.sig_ptt_released.connect(_on_ptt_released)
@@ -1006,10 +1057,13 @@ class ROVMainWindow(QMainWindow):
             if self._ai_proc and hasattr(self._ai_proc, 'sig_error'):
                 def _on_cv_alert(err_text):
                     if "CV CRITICAL ALERT" in err_text:
-                        alert_desc = err_text.replace("⚠️ CV CRITICAL ALERT:", "").strip()
+                        alert_desc = err_text.replace(
+                            "⚠️ CV CRITICAL ALERT:", "").strip()
                         if self._agent_brain and self._tts_worker and getattr(self, '_voice_agent_enabled', True):
-                            out = self._agent_brain.process_emergency_event("critical_alert", alert_desc)
-                            self._tts_worker.speak(out.speech_response, is_emergency=True)
+                            out = self._agent_brain.process_emergency_event(
+                                "critical_alert", alert_desc)
+                            self._tts_worker.speak(
+                                out.speech_response, is_emergency=True)
 
                 self._ai_proc.sig_error.connect(_on_cv_alert)
 
@@ -1020,17 +1074,20 @@ class ROVMainWindow(QMainWindow):
 
             # Giới thiệu tự động khi khởi động phần mềm
             welcome_text = "Tôi là Nexos, trợ lý ảo chuyên nghiệp sẽ hỗ trợ bạn trong suốt quá trình làm việc."
-            QtCore.QTimer.singleShot(800, lambda: self._tts_worker.speak(welcome_text))
+            QtCore.QTimer.singleShot(
+                800, lambda: self._tts_worker.speak(welcome_text))
             if self._ai_panel:
-                self._ai_panel.lbl_agent_speech.setText(f"Agent: {welcome_text}")
+                self._ai_panel.lbl_agent_speech.setText(
+                    f"Agent: {welcome_text}")
 
             if hasattr(self, 'power_widget') and self.power_widget:
-                self.power_widget.add_log("🎙 Trợ lý Giọng nói Offline Nexos (VAD+STT+SLM+TTS) đã sẵn sàng", "SUCCESS")
+                self.power_widget.add_log(
+                    "🎙 Trợ lý Giọng nói Offline Nexos (VAD+STT+SLM+TTS) đã sẵn sàng", "SUCCESS")
 
         except Exception as exc:
             print(f"[Main] Error starting Voice Agent: {exc}")
 
-    def _process_pilot_voice_command(self, text: str = "", pcm_audio = None, is_ptt: bool = False):
+    def _process_pilot_voice_command(self, text: str = "", pcm_audio=None, is_ptt: bool = False):
         """Process transcribed voice command from pilot using async background worker (0% GUI freeze)."""
         if not self._agent_brain:
             return
@@ -1046,7 +1103,8 @@ class ROVMainWindow(QMainWindow):
         else:
             battery_pct = int(self.settings.get("battery_pct", 85))
 
-        temp_c = float(self._named_sensors.get("TEMP", 28.5)) if hasattr(self, '_named_sensors') and isinstance(self._named_sensors, dict) and "TEMP" in self._named_sensors else 28.5
+        temp_c = float(self._named_sensors.get("TEMP", 28.5)) if hasattr(self, '_named_sensors') and isinstance(
+            self._named_sensors, dict) and "TEMP" in self._named_sensors else 28.5
 
         telemetry = {
             "depth": round(float(getattr(self, '_depth', 0.0)), 2),
@@ -1066,17 +1124,20 @@ class ROVMainWindow(QMainWindow):
         }
 
         # Run STT & LLM off the Qt GUI Main Thread in an async QThread
-        worker = AgentAsyncWorker(self._agent_brain, text, pcm_audio, self._stt_worker, telemetry, is_ptt=is_ptt, parent=self)
+        worker = AgentAsyncWorker(self._agent_brain, text, pcm_audio,
+                                  self._stt_worker, telemetry, is_ptt=is_ptt, parent=self)
 
         def _on_async_completed(output, immediate_action, cmd_text):
             try:
                 # Check if voice agent was disabled while worker was processing in background
                 if hasattr(self, '_voice_agent_enabled') and not self._voice_agent_enabled:
-                    print("[Main] Async worker completed but Voice Agent is disabled. Suppressing response.")
+                    print(
+                        "[Main] Async worker completed but Voice Agent is disabled. Suppressing response.")
                     return
 
                 if output is None or not output.speech_response:
-                    print("[Main] Empty or invalid agent response. Ignoring UI update.")
+                    print(
+                        "[Main] Empty or invalid agent response. Ignoring UI update.")
                     return
 
                 if cmd_text and self._ai_panel and hasattr(self._ai_panel, 'txt_voice_cmd'):
@@ -1087,22 +1148,26 @@ class ROVMainWindow(QMainWindow):
                     if self._tts_worker:
                         self._tts_worker.speak(output.speech_response)
                     if self._ai_panel:
-                        self._ai_panel.lbl_agent_speech.setText(f"Agent: {output.speech_response}")
+                        self._ai_panel.lbl_agent_speech.setText(
+                            f"Agent: {output.speech_response}")
                     if hasattr(self, 'power_widget') and self.power_widget:
-                        self.power_widget.add_log(f"🎙 Agent: {output.speech_response}", "INFO")
+                        self.power_widget.add_log(
+                            f"🎙 Agent: {output.speech_response}", "INFO")
 
                 # 2. Update Safety Confirmation Box on UI
                 if self._ai_panel:
                     pending = self._agent_brain.safety_guard.get_pending_action()
                     if pending:
-                        self._ai_panel.lbl_safety_prompt.setText(f"CẦN XÁC NHẬN: {pending.get('description')}")
+                        self._ai_panel.lbl_safety_prompt.setText(
+                            f"CẦN XÁC NHẬN: {pending.get('description')}")
                         self._ai_panel.grp_safety.setVisible(True)
                     else:
                         self._ai_panel.grp_safety.setVisible(False)
 
                 # 3. Execute Immediate Action if approved
                 if immediate_action:
-                    self._dispatch_agent_action(immediate_action.get("action"), immediate_action.get("params", {}))
+                    self._dispatch_agent_action(immediate_action.get(
+                        "action"), immediate_action.get("params", {}))
             finally:
                 self._is_processing_voice = False
 
@@ -1113,7 +1178,8 @@ class ROVMainWindow(QMainWindow):
         """Execute dispatched MAVLink / Hardware actions from Voice Agent."""
         print(f"[Main] Dispatching Agent Action: {action_name} ({params})")
         if hasattr(self, 'power_widget') and self.power_widget:
-            self.power_widget.add_log(f"⚙️ Thực thi lệnh Agent: {action_name}", "SUCCESS")
+            self.power_widget.add_log(
+                f"⚙️ Thực thi lệnh Agent: {action_name}", "SUCCESS")
 
         speed = float(params.get("speed", 0.6))
         duration = float(params.get("duration", 1.5))
@@ -1157,7 +1223,8 @@ class ROVMainWindow(QMainWindow):
                         self._pos_ned.tolist() if hasattr(self._pos_ned, 'tolist') else list(self._pos_ned)
                     )
                 elif ptype == "yaw_scan_360":
-                    msg = self._auto_controller.start_yaw_scan_360(float(self._heading))
+                    msg = self._auto_controller.start_yaw_scan_360(
+                        float(self._heading))
                 else:
                     msg = self._auto_controller.start_circle_orbit(
                         3.0,
@@ -1195,7 +1262,8 @@ class ROVMainWindow(QMainWindow):
                     exporter = ReportExporter(self.db)
                     rpath = exporter.export_html(self.active_session_id)
                     if rpath:
-                        QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(rpath))
+                        QtGui.QDesktopServices.openUrl(
+                            QtCore.QUrl.fromLocalFile(rpath))
                 except Exception as exc:
                     print(f"[Main] Report export error: {exc}")
         elif action_name == "move_forward":
@@ -1243,11 +1311,13 @@ class ROVMainWindow(QMainWindow):
         self._ctrl[axis] = max(-1.0, min(1.0, float(val)))
         self._send_mavlink_control()
         # Timer tự động dừng cơ động
-        QtCore.QTimer.singleShot(int(duration_s * 1000), self._reset_voice_maneuver)
+        QtCore.QTimer.singleShot(
+            int(duration_s * 1000), self._reset_voice_maneuver)
 
     def _reset_voice_maneuver(self):
         """Dừng chuyển động cơ động giọng nói và đưa trục về vị trí trung hòa."""
-        self._ctrl = dict(surge=0., sway=0., heave=0., roll=0., pitch=0., yaw=0.)
+        self._ctrl = dict(surge=0., sway=0., heave=0.,
+                          roll=0., pitch=0., yaw=0.)
         self._send_mavlink_control()
 
     def _set_flight_mode(self, mode: str):
@@ -1256,7 +1326,8 @@ class ROVMainWindow(QMainWindow):
         if self._mav_worker and hasattr(self._mav_worker, 'set_flight_mode'):
             self._mav_worker.set_flight_mode(mode)
         if hasattr(self, 'power_widget') and self.power_widget:
-            self.power_widget.add_log(f"🎮 Chế độ bay: {self._flight_mode}", "INFO")
+            self.power_widget.add_log(
+                f"🎮 Chế độ bay: {self._flight_mode}", "INFO")
 
     def _on_ai_model_loaded(self, ok: bool, msg: str):
         print(f"[AI] Model status: {msg}")
@@ -1279,10 +1350,12 @@ class ROVMainWindow(QMainWindow):
                 self._ai_proc.start()
 
             # Mở luồng RTSP ngầm (10-15 FPS) nếu đang ở chế độ WebRTC
-            is_webrtc = (self.settings.get('video_source', 'webrtc') == 'webrtc')
+            is_webrtc = (self.settings.get(
+                'video_source', 'webrtc') == 'webrtc')
             if is_webrtc:
                 if self._ai_rtsp_rx is None:
-                    rtsp_url = self.settings.get('rtsp_url', 'rtsp://192.168.2.2:8555/cam')
+                    rtsp_url = self.settings.get(
+                        'rtsp_url', 'rtsp://192.168.2.2:8555/cam')
                     self._ai_rtsp_rx = VideoReceiver(
                         source_type=VideoSource.RTSP,
                         url_or_index=rtsp_url,
@@ -1292,11 +1365,14 @@ class ROVMainWindow(QMainWindow):
                         parent=self
                     )
                     if self._ai_proc:
-                        self._ai_rtsp_rx.sig_frame.connect(self._ai_proc.submit_frame)
+                        self._ai_rtsp_rx.sig_frame.connect(
+                            self._ai_proc.submit_frame)
                     self._ai_rtsp_rx.start()
-                    print(f"[Main] Đã bật luồng RTSP ngầm cho AI (12 FPS): {rtsp_url}")
+                    print(
+                        f"[Main] Đã bật luồng RTSP ngầm cho AI (12 FPS): {rtsp_url}")
                     if hasattr(self, 'power_widget') and self.power_widget:
-                        self.power_widget.add_log(f"🤖 Đã kích hoạt luồng AI RTSP ngầm (12 FPS): {rtsp_url}", "SUCCESS")
+                        self.power_widget.add_log(
+                            f"🤖 Đã kích hoạt luồng AI RTSP ngầm (12 FPS): {rtsp_url}", "SUCCESS")
         else:
             # Dừng và giải phóng luồng RTSP ngầm nếu đang chạy
             if self._ai_rtsp_rx is not None:
@@ -1369,7 +1445,8 @@ class ROVMainWindow(QMainWindow):
             self.ui.tabl_data.hide()
             layout.removeWidget(self.ui.tabl_data)
 
-        self._pilot_telemetry = PilotTelemetryWidget(parent=parent, on_gps_callback=self._open_gps_map)
+        self._pilot_telemetry = PilotTelemetryWidget(
+            parent=parent, on_gps_callback=self._open_gps_map)
         layout.addWidget(self._pilot_telemetry)
 
     # ----------------------------------------------------------
@@ -1588,7 +1665,8 @@ class ROVMainWindow(QMainWindow):
         if hasattr(self, '_auto_controller') and self._auto_controller.is_active:
             is_auto, auto_ctrl = self._auto_controller.update_step(
                 dt=1.0 / 60.0,
-                current_pos_ned=self._pos_ned.tolist() if hasattr(self._pos_ned, 'tolist') else list(self._pos_ned),
+                current_pos_ned=self._pos_ned.tolist() if hasattr(
+                    self._pos_ned, 'tolist') else list(self._pos_ned),
                 current_depth_m=float(self._depth),
                 current_heading_deg=float(self._heading)
             )
@@ -1663,8 +1741,9 @@ class ROVMainWindow(QMainWindow):
             loads = [abs(v) for v in state.get("thruster_pct", [])]
             loads_norm = [t / 100.0 for t in loads] if loads else [0.0]
         else:
-            loads_norm = [abs(v) for v in self._physics._thruster_inputs] if (self._physics and hasattr(self._physics, '_thruster_inputs')) else [0.0]
-        
+            loads_norm = [abs(v) for v in self._physics._thruster_inputs] if (
+                self._physics and hasattr(self._physics, '_thruster_inputs')) else [0.0]
+
         # Real-time 3D Propeller thrust speed
         if hasattr(self.gl_3d, 'set_thrust') and loads_norm:
             self.gl_3d.set_thrust(max(loads_norm))
@@ -1954,7 +2033,8 @@ class ROVMainWindow(QMainWindow):
                 from utils.path_utils import get_default_media_dir
                 path = get_default_media_dir()
             except Exception:
-                path = os.path.join(os.path.expanduser("~"), "Documents", "CNC_NExora_Media")
+                path = os.path.join(os.path.expanduser(
+                    "~"), "Documents", "CNC_NExora_Media")
         try:
             os.makedirs(path, exist_ok=True)
         except Exception:
@@ -1977,7 +2057,7 @@ class ROVMainWindow(QMainWindow):
 
     def _take_snapshot(self):
         """Chụp ảnh từ frame hiện tại (WebRTC hoặc OpenCV) và lưu file PNG."""
-        is_webrtc_active = (getattr(self, '_webrtc_widget', None) is not None and 
+        is_webrtc_active = (getattr(self, '_webrtc_widget', None) is not None and
                             self._webrtc_widget.isVisible())
         if not is_webrtc_active and self._last_frame is None:
             QtWidgets.QMessageBox.warning(
@@ -2091,7 +2171,8 @@ class ROVMainWindow(QMainWindow):
         """
         # 1. Cập nhật Video Receiver / WebRTC nếu có
         src = self.settings.get('video_source', 'webrtc')
-        webrtc_url = self.settings.get('webrtc_url', 'http://192.168.2.2:8889/cam')
+        webrtc_url = self.settings.get(
+            'webrtc_url', 'http://192.168.2.2:8889/cam')
         rtsp_url = self.settings.get('rtsp_url', 'rtsp://192.168.2.2:8555/cam')
 
         if src == 'webrtc':
@@ -2102,20 +2183,14 @@ class ROVMainWindow(QMainWindow):
             self._switch_to_native_video()
             if self._video_rx:
                 if src == 'udp_h264':
-                    port = int(self.settings.get('udp_video_port', 5620))
+                    port = int(self.settings.get('udp_video_port', 5600))
                     self._video_rx.set_source(VideoSource.UDP_H264, port)
-                elif src == 'webcam':
-                    idx = int(self.settings.get('webcam_index', 0))
-                    self._video_rx.set_source(VideoSource.WEBCAM, idx)
                 elif src == 'rtsp':
                     self._video_rx.set_source(VideoSource.RTSP, rtsp_url)
-                elif src == 'file':
-                    path = self.settings.get('video_file', '')
-                    self._video_rx.set_source(VideoSource.FILE, path)
 
             # Đồng bộ lại ComboBox chọn nhanh nguồn video
             if hasattr(self, 'cb_quick_vid_src'):
-                map_idx = {'webrtc': 0, 'webcam': 1, 'udp_h264': 2, 'rtsp': 3, 'file': 4}
+                map_idx = {'webrtc': 0, 'rtsp': 1, 'udp_h264': 2}
                 self.cb_quick_vid_src.blockSignals(True)
                 self.cb_quick_vid_src.setCurrentIndex(map_idx.get(src, 0))
                 self.cb_quick_vid_src.blockSignals(False)
@@ -2307,7 +2382,8 @@ class ROVMainWindow(QMainWindow):
             from utils.path_utils import get_logs_dir
             def_csv = os.path.join(get_logs_dir(), "rov_activity.csv")
         except Exception:
-            def_csv = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "CNC_NExora", "logs", "rov_activity.csv")
+            def_csv = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser(
+                "~")), "CNC_NExora", "logs", "rov_activity.csv")
         csv_path = self.settings.get("csv_log_path", "").strip() or def_csv
         try:
             # Tự động tạo thư mục chứa nếu chưa có
@@ -2376,7 +2452,8 @@ class ROVMainWindow(QMainWindow):
                 pass
         if hasattr(self, 'db') and self.db and hasattr(self, 'active_session_id') and self.active_session_id:
             try:
-                self.db.end_dive_session(self.active_session_id, status="COMPLETED")
+                self.db.end_dive_session(
+                    self.active_session_id, status="COMPLETED")
             except Exception:
                 pass
         if self._physics:
@@ -2426,7 +2503,7 @@ def main():
         # Video
         "video_source":  "webrtc",
         "webrtc_url":    "http://192.168.2.2:8889/cam",
-        "udp_video_port": 5620,
+        "udp_video_port": 5600,
         "rtsp_url":      "rtsp://192.168.2.2:8555/cam",
         "video_fps":     30,
         "video_resolution": "1280x720",
@@ -2447,9 +2524,20 @@ def main():
         "auto_reset_origin": True
     }
 
+    # Cấu hình cờ Chromium cho QWebEngineView (WebRTC LAN, Autoplay, GPU)
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+        "--autoplay-policy=no-user-gesture-required "
+        "--unsafely-treat-insecure-origin-as-secure=http://192.168.2.2:8889,http://192.168.2.2:8555,http://192.168.2.2:8554,http://192.168.2.2,http://192.168.2.2:2770,http://192.168.2.2:80 "
+        "--allow-running-insecure-content "
+        "--ignore-certificate-errors "
+        "--disable-features=WebRtcHideLocalIpsWithMdns "
+        "--enable-gpu-rasterization"
+    )
+
     # Cấu hình OpenGL context sharing cho QWebEngineView và OpenGL 3D Widget
     try:
-        QtCore.QCoreApplication.setAttribute(QtCore.Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
+        QtCore.QCoreApplication.setAttribute(
+            QtCore.Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
     except Exception:
         pass
 
@@ -2473,17 +2561,20 @@ def main():
     app.processEvents()
 
     # Step 1: MAVLink & Protocol Stack
-    splash.set_progress(20, "Initializing MAVLink Protocol Engine & SLAM Receiver...")
+    splash.set_progress(
+        20, "Initializing MAVLink Protocol Engine & SLAM Receiver...")
     time.sleep(0.3)
 
     # Step 2: SQLite Telemetry WAL Engine & Commercial License Validation
-    splash.set_progress(45, "Validating Commercial License & Telemetry Database...")
+    splash.set_progress(
+        45, "Validating Commercial License & Telemetry Database...")
     time.sleep(0.3)
     try:
         from core.licensing import LicenseManager, LicenseDialog
         lic_mgr = LicenseManager.get_instance()
         lic_info = lic_mgr.get_license_info()
-        print(f"[Commercial License] Machine ID: {lic_info.machine_id} | Type: {lic_info.license_type} | Valid: {lic_info.is_valid}")
+        print(
+            f"[Commercial License] Machine ID: {lic_info.machine_id} | Type: {lic_info.license_type} | Valid: {lic_info.is_valid}")
         if not lic_info.is_valid:
             splash.hide()
             lic_dlg = LicenseDialog()
@@ -2500,12 +2591,14 @@ def main():
         print(f"[License] Check warning: {e}")
 
     # Step 3: Instantiate ROVMainWindow
-    splash.set_progress(65, "Initializing OpenGL 3D Motion Models & Subsea Canvas...")
+    splash.set_progress(
+        65, "Initializing OpenGL 3D Motion Models & Subsea Canvas...")
     window = ROVMainWindow(settings)
     window.setWindowTitle("CNC NExora — ROV CONTROL SYSTEM")
 
     # Step 4: AI & Voice Agent
-    splash.set_progress(85, "Spinning up Voice Agent Co-Pilot Nexos & YOLOv8 Detectors...")
+    splash.set_progress(
+        85, "Spinning up Voice Agent Co-Pilot Nexos & YOLOv8 Detectors...")
     time.sleep(0.3)
 
     # Step 5: Ready

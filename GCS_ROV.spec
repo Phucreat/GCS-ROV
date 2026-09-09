@@ -31,6 +31,7 @@ except Exception:
 
 hiddenimports = [
     'PyQt6', 'PyQt6.QtCore', 'PyQt6.QtGui', 'PyQt6.QtWidgets', 'PyQt6.QtOpenGLWidgets',
+    'PyQt6.QtWebEngineWidgets', 'PyQt6.QtWebEngineCore',
     'pyqtgraph', 'pyqtgraph.opengl',
     'OpenGL', 'OpenGL.GL', 'OpenGL.arrays', 'OpenGL.platform',
     'ultralytics', 'cv2', 'torch', 'torchvision', 'zmq',
