@@ -539,8 +539,8 @@ class ROVMainWindow(QMainWindow):
             self._setup_video_pipeline()
 
     def _setup_video_pipeline(self):
-        """Khởi tạo video pipeline: WebRTC (Primary <80ms) + ARHUDWidget (OpenCV Native) + AIVisionProcessor."""
-        src = self.settings.get('video_source', 'webrtc')
+        """Khởi tạo video pipeline: RTSP Native (<50ms) + ARHUDWidget (OpenCV Native) + AIVisionProcessor."""
+        src = self.settings.get('video_source', 'rtsp')
         webrtc_url = self.settings.get(
             'webrtc_url', 'http://192.168.2.2:8889/cam')
         rtsp_url = self.settings.get('rtsp_url', 'rtsp://192.168.2.2:8555/cam')
@@ -775,36 +775,63 @@ class ROVMainWindow(QMainWindow):
             self._popout_dialog.activateWindow()
             return
 
-        if self._video_rx and not self._video_rx.isRunning():
-            self._video_rx.start()
-
         dlg = QtWidgets.QDialog(self)
-        dlg.setWindowTitle("📹 Live Camera Feed + AR HUD (Cửa sổ lớn)")
         dlg.resize(960, 600)
         lay = QtWidgets.QVBoxLayout(dlg)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
 
-        # Nhúng AR HUD copy / view
-        hud_standalone = ARHUDWidget(parent=dlg)
-        hud_standalone.set_hud_enabled(
-            self.settings.get('ar_hud_enabled', True))
-        lay.addWidget(hud_standalone)
+        is_webrtc = (self.settings.get('video_source', 'webrtc') == 'webrtc')
 
-        # Kết nối frame
-        if self._video_rx:
-            self._video_rx.sig_frame.connect(hud_standalone.set_frame)
+        if is_webrtc:
+            dlg.setWindowTitle("🌐 WebRTC Live Stream (<80ms, 60 FPS) — Cửa Sổ Lớn")
+            webrtc_url = self.settings.get('webrtc_url', 'http://192.168.2.2:8889/cam')
+            player_popout = WebRTCPlayerWidget(webrtc_url=webrtc_url, parent=dlg)
+            player_popout.set_hud_enabled(self.settings.get('ar_hud_enabled', True))
+            lay.addWidget(player_popout)
+            self._popout_player = player_popout
+
             if self._ai_proc:
-                self._ai_proc.sig_detections.connect(
-                    hud_standalone.set_detections)
+                self._ai_proc.sig_detections.connect(player_popout.set_detections)
 
-        def _on_close(event):
+            def _on_close(event):
+                if self._ai_proc:
+                    try:
+                        self._ai_proc.sig_detections.disconnect(player_popout.set_detections)
+                    except Exception:
+                        pass
+                self._popout_dialog = None
+                self._popout_player = None
+                event.accept()
+        else:
+            dlg.setWindowTitle("📹 RTSP Live Camera Feed + AR HUD — Cửa Sổ Lớn")
+            if self._video_rx and not self._video_rx.isRunning():
+                self._video_rx.start()
+
+            hud_standalone = ARHUDWidget(parent=dlg)
+            hud_standalone.set_hud_enabled(self.settings.get('ar_hud_enabled', True))
+            lay.addWidget(hud_standalone)
+            self._popout_player = hud_standalone
+
             if self._video_rx:
-                try:
-                    self._video_rx.sig_frame.disconnect(
-                        hud_standalone.set_frame)
-                except Exception:
-                    pass
-            self._popout_dialog = None
-            event.accept()
+                self._video_rx.sig_frame.connect(hud_standalone.set_frame)
+            if self._ai_proc:
+                self._ai_proc.sig_detections.connect(hud_standalone.set_detections)
+
+            def _on_close(event):
+                if self._video_rx:
+                    try:
+                        self._video_rx.sig_frame.disconnect(hud_standalone.set_frame)
+                    except Exception:
+                        pass
+                if self._ai_proc:
+                    try:
+                        self._ai_proc.sig_detections.disconnect(hud_standalone.set_detections)
+                    except Exception:
+                        pass
+                self._popout_dialog = None
+                self._popout_player = None
+                event.accept()
 
         dlg.closeEvent = _on_close
         self._popout_dialog = dlg
@@ -1917,6 +1944,21 @@ class ROVMainWindow(QMainWindow):
                 mode=self._flight_mode,
                 armed='ARMED' in self._sys_status.upper()
             )
+        if getattr(self, '_popout_player', None) and hasattr(self._popout_player, 'update_telemetry'):
+            self._popout_player.update_telemetry(
+                roll=self._roll,
+                pitch=self._pitch,
+                yaw=self._yaw,
+                depth=self._depth,
+                heading=self._heading,
+                speed=float(np.linalg.norm(self._vel_ned)),
+                voltage=self._voltage,
+                current=self._current,
+                pct=int(self._current),
+                signal_pct=self._link_quality,
+                mode=self._flight_mode,
+                armed='ARMED' in self._sys_status.upper()
+            )
 
     # ----------------------------------------------------------
     # CONTROL
@@ -2170,7 +2212,7 @@ class ROVMainWindow(QMainWindow):
         KHÔNG dừng các worker đang chạy và KHÔNG gián đoạn hoạt động.
         """
         # 1. Cập nhật Video Receiver / WebRTC nếu có
-        src = self.settings.get('video_source', 'webrtc')
+        src = self.settings.get('video_source', 'rtsp')
         webrtc_url = self.settings.get(
             'webrtc_url', 'http://192.168.2.2:8889/cam')
         rtsp_url = self.settings.get('rtsp_url', 'rtsp://192.168.2.2:8555/cam')

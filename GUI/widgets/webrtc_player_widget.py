@@ -21,7 +21,12 @@ from typing import List, Optional
 
 from PyQt6.QtCore import QTimer, QUrl, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
-from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
+from PyQt6.QtWebEngineCore import (
+    QWebEnginePage,
+    QWebEngineProfile,
+    QWebEngineScript,
+    QWebEngineSettings,
+)
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (
     QFrame,
@@ -508,6 +513,33 @@ class WebRTCPlayerWidget(QWidget):
 
         # Enable GPU Acceleration & Media Autoplay
         profile = self._web_view.page().profile()
+
+        # ── Tối ưu WebRTC trên mạng LAN Tether (Không Internet) ──
+        # Tắt STUN stun.l.google.com để tránh DNS timeout 1-2s và triệt tiêu lỗi errorcode -105
+        lan_script = QWebEngineScript()
+        lan_script.setName("lan_webrtc_optimizer")
+        lan_script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+        lan_script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+        lan_script.setRunsOnSubFrames(True)
+        lan_script.setSourceCode("""
+        (function() {
+            if (window.RTCPeerConnection) {
+                const OrigPC = window.RTCPeerConnection;
+                class LanRTCPeerConnection extends OrigPC {
+                    constructor(config, constraints) {
+                        if (config && config.iceServers) {
+                            config.iceServers = [];
+                        }
+                        super(config, constraints);
+                    }
+                }
+                window.RTCPeerConnection = LanRTCPeerConnection;
+                console.log('[WebRTC] LAN mode active: STUN server stripped.');
+            }
+        })();
+        """)
+        profile.scripts().insert(lan_script)
+
         settings = self._web_view.page().settings()
         settings.setAttribute(
             QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False

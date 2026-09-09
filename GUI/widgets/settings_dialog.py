@@ -237,13 +237,13 @@ class SettingsDialog(QDialog):
 
         self.cb_vid_source = QComboBox()
         self.cb_vid_source.addItems([
-            "WebRTC (Ultra Low Latency <80ms - Mặc định ROV)",
-            "RTSP (Pi Camera rtsp://192.168.2.2:8555/cam)",
+            "RTSP (Pi Camera rtsp://192.168.2.2:8555/cam - Khuyến nghị <50ms)",
+            "WebRTC (MediaMTX http://192.168.2.2:8889/cam)",
             "UDP H.264 (ROV → GCS port 5600)",
         ])
-        src_map = {"webrtc": 0, "rtsp": 1, "udp_h264": 2}
+        src_map = {"rtsp": 0, "webrtc": 1, "udp_h264": 2}
         self.cb_vid_source.setCurrentIndex(
-            src_map.get(settings.get("video_source", "webrtc"), 0)
+            src_map.get(settings.get("video_source", "rtsp"), 0)
         )
         form_vid.addRow("Video Source:", self.cb_vid_source)
 
@@ -652,7 +652,7 @@ class SettingsDialog(QDialog):
     def _save_and_accept(self):
         logs_dir  = self.ed_logs.text().strip()
         media_dir = self.ed_media_path.text().strip() or "D:/GCS_ROV_Media"
-        src_list  = ["webrtc", "rtsp", "udp_h264"]
+        src_list  = ["rtsp", "webrtc", "udp_h264"]
 
         # Parse GCS lat/lon
         try:

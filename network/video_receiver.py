@@ -133,13 +133,23 @@ class _LiveStreamGrabber(threading.Thread):
                 self.read_failed = True
                 break
 
-            ret, frame = self.cap.read()
-            if not ret or frame is None:
+            # 1. Grab nhanh để xả sạch socket/FFmpeg packet buffer (<0.2ms)
+            if not self.cap.grab():
                 consecutive_fails += 1
-                if consecutive_fails > 25:
+                if consecutive_fails > 30:
                     self.read_failed = True
                     break
-                time.sleep(0.005)
+                time.sleep(0.002)
+                continue
+
+            # 2. Decode khung hình mới nhất tức thì
+            ret, frame = self.cap.retrieve()
+            if not ret or frame is None:
+                consecutive_fails += 1
+                if consecutive_fails > 30:
+                    self.read_failed = True
+                    break
+                time.sleep(0.002)
                 continue
 
             consecutive_fails = 0
@@ -340,7 +350,7 @@ class VideoReceiver(QThread):
                         changed = self._source_changed
 
                     if changed:
-                        print("[VideoReceiver] Nguồn video đã thay đổi - khởi tạo lại luồng.")
+                        print("[VideoReceiver] Video source changed - recreating stream.")
                         grabber.stop()
                         grabber.join(timeout=0.3)
                         break
@@ -359,13 +369,11 @@ class VideoReceiver(QThread):
                         reconnect_count += 1
                         if reconnect_count % 5 == 1:
                             self.sig_error.emit(
-                                f"Đang chờ tín hiệu video ({url_or_index}). Đang kết nối lại (lần {reconnect_count})..."
+                                f"Waiting for video ({url_or_index}). Reconnecting (attempt {reconnect_count})..."
                             )
 
                         print(
-                            f"[VideoReceiver] Đọc luồng video thất bại "
-                            f"(lần {reconnect_count}). "
-                            f"Thử kết nối lại sau {_RTSP_RECONNECT_DELAY_S:.1f}s…"
+                            f"[VideoReceiver] Read failed (retry {reconnect_count}). Reconnecting in {_RTSP_RECONNECT_DELAY_S:.1f}s..."
                         )
                         self._interruptible_sleep(cv2, _RTSP_RECONNECT_DELAY_S)
 
@@ -373,7 +381,7 @@ class VideoReceiver(QThread):
                         if cap is not None and cap.isOpened():
                             reconnect_count = 0
                             self.sig_connected.emit(True)
-                            print("[VideoReceiver] Đã kết nối lại luồng video thành công.")
+                            print("[VideoReceiver] Video reconnected successfully.")
                             grabber = _LiveStreamGrabber(cap)
                             grabber.start()
                         continue
@@ -532,10 +540,11 @@ class VideoReceiver(QThread):
                 # Ép TCP transport (khớp Cockpit 100%), loại bỏ probesize;32 gây lỗi giải mã SPS/PPS
                 import os
                 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
-                    "rtsp_transport;tcp|"
+                    "rtsp_transport;udp|"
                     "fflags;nobuffer|"
                     "flags;low_delay|"
-                    "max_delay;0"
+                    "max_delay;0|"
+                    "buffer_size;65536"
                 )
                 rtsp_url = str(url_or_index).strip()
                 if "?" in rtsp_url and ("fflags=" in rtsp_url or "flags=" in rtsp_url):
@@ -560,14 +569,14 @@ class VideoReceiver(QThread):
                         parsed = urlparse(cand_url)
                         h = parsed.hostname or "192.168.2.2"
                         p = parsed.port or (8555 if "8555" in cand_url else 8554)
-                        # Kiểm tra nhanh socket trong 0.4s tránh bị FFmpeg treo
-                        if not self._is_tcp_port_open(h, p, timeout=0.4):
+                        # Đối với các URL dự phòng, kiểm tra socket 0.8s tránh bị FFmpeg treo
+                        if cand_url != rtsp_url and not self._is_tcp_port_open(h, p, timeout=0.8):
                             continue
 
                         temp_cap = cv2.VideoCapture(cand_url, cv2.CAP_FFMPEG)
                         if temp_cap is not None and temp_cap.isOpened():
                             cap = temp_cap
-                            print(f"[VideoReceiver] RTSP đã kết nối thành công: {cand_url}")
+                            print(f"[VideoReceiver] RTSP connected: {cand_url}")
                             if cand_url != rtsp_url:
                                 with self._lock:
                                     self._url_or_index = cand_url
@@ -575,7 +584,7 @@ class VideoReceiver(QThread):
                         else:
                             self._safe_release(temp_cap)
                     except Exception as e:
-                        print(f"[VideoReceiver] Lỗi thử RTSP {cand_url}: {e}")
+                        print(f"[VideoReceiver] RTSP candidate error {cand_url}: {e}")
 
                 if cap is not None:
                     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
