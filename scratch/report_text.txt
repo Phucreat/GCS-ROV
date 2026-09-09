@@ -1,0 +1,148 @@
+BÁO CÁO TÌNH TRẠNG VIDEO STREAM ROV
+Tài liệu bàn giao nhanh cho Web Developer
+Mục tiêu: nắm ngay hệ thống hiện tại, nguyên nhân độ trễ và phần cần triển khai tiếp theo
+KẾT LUẬN NGẮN: Nguồn camera trên Raspberry Pi và MediaMTX đang hoạt động tốt. Cockpit Direct RTSP và trang WebRTC của MediaMTX đều cho hình ảnh nét, mượt và độ trễ rất thấp. Độ trễ lớn hơn xuất hiện chủ yếu ở pipeline nhận/hiển thị của GCS hiện tại. Hướng triển khai khuyến nghị cho Web Control là nhận WebRTC/WHEP trực tiếp từ MediaMTX, bỏ OBS/Virtual Camera khỏi kiến trúc cuối cùng.
+1. Hệ thống hiện tại
+Pipeline camera đang chạy ổn định:
+Camera Module 3 (IMX708)        ↓Raspberry Pi 5 → rpicam-vid → H.264        ↓MediaMTX (/cam)        ├─ RTSP   : rtsp://192.168.2.2:8555/cam        └─ WebRTC : http://192.168.2.2:8889/cam                     WHEP: http://192.168.2.2:8889/cam/whep
+Thành phần
+Tình trạng hiện tại
+Camera / Pi
+Hoạt động; đã stream H.264 ổn định.
+MediaMTX
+Cùng path /cam có thể đọc bằng RTSP và WebRTC.
+Cockpit
+Direct RTSP; ảnh 1280×720 H.264, transport RTP/TCP, rất mượt.
+WebRTC viewer
+http://192.168.2.2:8889/cam đã test thực tế: gần realtime, tương đương Cockpit.
+GCS hiện tại
+RTSP/OpenCV/FFmpeg có độ trễ lớn hơn; OBS bridge cải thiện nhưng bất tiện.
+2. Kết quả thử nghiệm quan trọng
+Phương án
+Kết quả
+Độ trễ tương đối
+Kết luận
+Cockpit - Direct RTSP
+Nét, mượt, ổn định
+Rất thấp
+Mốc tham chiếu tốt.
+MediaMTX WebRTC :8889/cam
+Nét, mượt, gần realtime
+≈ Cockpit
+Nguồn phù hợp để tích hợp Web Control.
+ffplay RTSP TCP/UDP
+Chạy tốt nhưng chậm hơn Cockpit một chút
+Thấp nhưng có delay
+RTSP bản thân không phải lỗi duy nhất; cách client xử lý rất quan trọng.
+GCS - RTSP/OpenCV/FFmpeg
+Có hình nhưng delay rõ hơn
+Cao hơn
+Pipeline client hiện tại là nút thắt chính.
+RTSP → FFmpeg → UDP localhost → GCS
+Có hình, delay không cải thiện đáng kể
+Cao
+Không nên dùng làm kiến trúc cuối.
+WebRTC → OBS → Virtual Camera → GCS
+Khá sát realtime
+Thấp
+Chứng minh WebRTC tốt, nhưng OBS là bước trung gian bất tiện.
+Kết quả then chốt: khi mở trực tiếp WebRTC của MediaMTX, chất lượng và latency đã đạt mức gần Cockpit. Vì vậy không cần thay đổi toàn bộ camera pipeline trên Pi trước khi tích hợp web.
+3. Vì sao Cockpit Direct RTSP mượt hơn client RTSP thông thường?
+Tham chiếu source chính thức Cockpit v1.18: Direct RTSP của Cockpit sử dụng một sidecar go2rtc để kết nối tới RTSP rồi cung cấp lại dưới dạng WebRTC cho video player hiện có. Blue Robotics chọn cách này để tận dụng WebRTC player low-latency mà không phải viết lại toàn bộ frontend video.
+Cockpit Direct RTSP (tham chiếu kiến trúc)RTSP source → go2rtc → WebRTC → Cockpit video playerHệ thống ROV có thể ngắn hơnMediaMTX → WebRTC/WHEP → Web Control <video>
+Ý nghĩa đối với Web Dev: không nên cố xây một RTSP/OpenCV player mới chỉ để “bắt chước Cockpit”. MediaMTX đã cung cấp WebRTC trực tiếp, nên có thể bỏ hẳn bước RTSP→go2rtc ở Web Control.
+4. Kiến trúc mục tiêu đề xuất cho Web Control
+ROV / Raspberry Pi                             Laptop / Web Control──────────────────────────                     ─────────────────────────Camera Module 3    ↓rpicam-vid → H.264    ↓MediaMTX :8889 /cam/whep ───── TETHER ─────→ WebRTC/WHEP client                                                   ↓                                              HTML <video>                                                   ↓                                           LIVE CAMERA FEED
+Mục tiêu vận hành cuối: cấp nguồn ROV/Pi → camera service và MediaMTX tự chạy → cắm tether → mở Web Control → video tự xuất hiện. Không mở OBS, không Virtual Camera, không ffplay/VLC, không yêu cầu thao tác “Start Camera”.
+5. Phần Web Developer cần triển khai
+Thay receiver video hiện tại ở vùng LIVE CAMERA FEED bằng WebRTC/WHEP client đọc trực tiếp endpoint http://192.168.2.2:8889/cam/whep.
+Render stream bằng native browser media pipeline (HTML <video> / RTCPeerConnection hoặc official MediaMTX reader implementation), không đưa frame qua OpenCV/BGR chỉ để hiển thị.
+Tự động connect khi trang/app khởi động; nếu Pi chưa sẵn sàng thì retry tự động.
+Tự reconnect khi Pi reboot, MediaMTX/camera restart, tether bị rút/cắm lại hoặc stream tạm mất. Không bắt người dùng refresh trang.
+Hiển thị trạng thái tối thiểu: Connecting / Connected / Disconnected-Reconnecting.
+Không tạo application-level frame queue. Với điều khiển ROV, frame mới nhất quan trọng hơn việc phát hết frame cũ.
+Camera host/path/port phải đặt trong config, không hard-code sâu trong component để sau này đổi IP hoặc thêm nhiều camera.
+Giữ tỉ lệ 16:9; ưu tiên autoplay + muted + playsinline; hỗ trợ fullscreen nếu cần.
+Prototype nhanh có thể dùng iframe http://192.168.2.2:8889/cam; bản chính thức nên dùng WHEP/WebRTC trực tiếp để kiểm soát reconnect, status và statistics tốt hơn.
+6. Yêu cầu mạng và điều kiện chạy ngoài thực địa
+WebRTC không phụ thuộc Wi-Fi hay Internet; nó chỉ cần kết nối IP giữa laptop và Raspberry Pi. Trong ROV thật, kết nối này phải đi qua tether/Ethernet.
+Wi-Fi: OFF        Internet: OFFLaptop 192.168.2.x  ←──── Ethernet/Tether ────→  Raspberry Pi 192.168.2.2        │                                             │        └──── WHEP/HTTP :8889 + WebRTC media ────────┘
+Cần kiểm tra firewall/network: TCP 8889 cho WebRTC/WHEP handshake và UDP 8189 cho WebRTC media theo cấu hình mặc định MediaMTX. Với mạng tether local, không nên tạo dependency bắt buộc vào STUN/TURN/Internet nếu kết nối trực tiếp đã hoạt động.
+7. Chất lượng hình ảnh / FPS sau khi dùng WebRTC
+WebRTC là lớp vận chuyển; resolution, FPS, bitrate và GOP vẫn được quyết định chủ yếu ở rpicam-vid trên Raspberry Pi. Web Dev không cần đổi URL khi camera chuyển từ 720p30 sang 720p60 nếu path /cam giữ nguyên.
+Cấu hình
+Bitrate thử
+Mục đích
+Khuyến nghị
+1280×720 @ 30 fps
+~3 Mbps
+Mốc ổn định hiện tại
+Fallback an toàn
+1280×720 @ 60 fps
+~4–6 Mbps
+Mượt hơn khi điều khiển
+Mục tiêu test tiếp theo
+1920×1080 @ 30 fps
+~4–8 Mbps
+Ưu tiên độ nét
+Chỉ dùng nếu latency/network vẫn tốt
+8. Tiêu chí nghiệm thu cho Web Dev
+Bài test
+Kỳ vọng
+Pass khi
+Mở Web Control khi Pi đã sẵn sàng
+Video tự xuất hiện
+Không cần Start/OBS/refresh.
+Mở Web Control trước khi Pi boot xong
+Tự retry
+Video tự lên khi stream xuất hiện.
+Tắt Wi-Fi và Internet
+Chạy qua tether
+WebRTC vẫn hoạt động.
+Rút/cắm lại tether
+Tự reconnect
+Không cần restart app.
+Reboot Pi / restart camera service
+Tự reconnect
+Video quay lại tự động.
+So sánh trực tiếp với :8889/cam và Cockpit
+Latency tương đương
+Không có chênh lệch rõ rệt.
+Chạy liên tục 10–30 phút
+Không tích lũy buffer
+Latency không tăng dần theo thời gian.
+Test 720p60 ~4–6 Mbps
+Mượt, không drop đáng kể
+Đạt quality target; nếu không thì fallback 720p30.
+9. Phân chia công việc ngay lúc này
+Đã hoàn thành / đã xác nhận
+Việc cần làm tiếp theo
+• Pi camera + MediaMTX đang stream ổn định.
+• RTSP /cam hoạt động.
+• WebRTC :8889/cam hoạt động và low-latency.
+• Cockpit Direct RTSP rất mượt.
+• Đã xác định GCS hiện tại là điểm gây thêm latency.
+• OBS chỉ là proof-of-concept, không phải kiến trúc cuối.
+• Web Dev tích hợp WHEP/WebRTC trực tiếp vào LIVE CAMERA FEED.
+• Thêm auto-connect/reconnect và trạng thái kết nối.
+• Kiểm tra chạy hoàn toàn qua tether, Wi-Fi OFF.
+• Đo latency so với Cockpit/:8889/cam.
+• Sau khi integration ổn, test 720p60 và tinh chỉnh bitrate/FPS trên Pi.
+10. Thông tin ngắn gọn để dev bắt đầu ngay
+RTSP source
+rtsp://192.168.2.2:8555/cam
+WebRTC viewer
+http://192.168.2.2:8889/cam
+WHEP endpoint
+http://192.168.2.2:8889/cam/whep
+Target frontend pipeline
+MediaMTX → WHEP/WebRTC → <video> → LIVE CAMERA FEED
+Không dùng trong bản cuối
+OBS / Virtual Camera / FFplay / OpenCV frame pipeline cho mục đích hiển thị
+Ưu tiên triển khai: làm một bản proof-of-concept WebRTC/WHEP trực tiếp trước, so latency với Cockpit và trang :8889/cam. Nếu đạt tương đương, giữ kiến trúc này và mới tối ưu chất lượng 720p60.
+Tài liệu kỹ thuật tham chiếu
+• Cockpit PR #2417 - Direct RTSP / go2rtc architecture: https://github.com/bluerobotics/cockpit/pull/2417
+• Cockpit v1.18 release - Direct RTSP support: https://github.com/bluerobotics/cockpit/discussions/2677
+• MediaMTX - Read with Web browsers: https://mediamtx.org/docs/read/web-browsers
+• MediaMTX - Read with WebRTC clients / WHEP: https://mediamtx.org/docs/read/webrtc
+• MediaMTX - WebRTC connectivity: https://mediamtx.org/docs/features/webrtc-specific-features

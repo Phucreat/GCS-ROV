@@ -237,27 +237,34 @@ class SettingsDialog(QDialog):
 
         self.cb_vid_source = QComboBox()
         self.cb_vid_source.addItems([
+            "WebRTC (Ultra Low Latency <80ms - Khuyến nghị ROV)",
+            "RTSP (Pi Camera 8555/cam)",
             "UDP H.264 (ROV → GCS port 5620)",
-            "RTSP (Pi Camera)",
             "Webcam (USB Local)",
             "Video File",
         ])
-        src_map = {"udp_h264": 0, "rtsp": 1, "webcam": 2, "file": 3}
+        src_map = {"webrtc": 0, "rtsp": 1, "udp_h264": 2, "webcam": 3, "file": 4}
         self.cb_vid_source.setCurrentIndex(
-            src_map.get(settings.get("video_source", "udp_h264"), 0)
+            src_map.get(settings.get("video_source", "webrtc"), 0)
         )
         form_vid.addRow("Video Source:", self.cb_vid_source)
+
+        self.ed_webrtc_url = QLineEdit(
+            settings.get("webrtc_url", "http://192.168.2.2:8889/cam")
+        )
+        self.ed_webrtc_url.setPlaceholderText("http://192.168.2.2:8889/cam")
+        form_vid.addRow("WebRTC URL:", self.ed_webrtc_url)
+
+        self.ed_rtsp_url = QLineEdit(
+            settings.get("rtsp_url", "rtsp://192.168.2.2:8555/cam")
+        )
+        self.ed_rtsp_url.setPlaceholderText("rtsp://192.168.2.2:8555/cam")
+        form_vid.addRow("RTSP URL (AI/Live):", self.ed_rtsp_url)
 
         self.sp_udp_port = QSpinBox()
         self.sp_udp_port.setRange(1024, 65535)
         self.sp_udp_port.setValue(int(settings.get("udp_video_port", 5620)))
         form_vid.addRow("UDP H.264 Port:", self.sp_udp_port)
-
-        self.ed_rtsp_url = QLineEdit(
-            settings.get("rtsp_url", "rtsp://192.168.2.2:8554/video")
-        )
-        self.ed_rtsp_url.setPlaceholderText("rtsp://192.168.2.2:8554/video")
-        form_vid.addRow("RTSP URL:", self.ed_rtsp_url)
 
         self.sp_webcam_idx = QSpinBox()
         self.sp_webcam_idx.setRange(0, 9)
@@ -387,6 +394,130 @@ class SettingsDialog(QDialog):
         hl_act.addWidget(btn_act_now)
         form_lic.addRow("Kích hoạt Key:", hl_act)
 
+        # ═══════════════════════════════════════════════════════════════
+        # TAB 7: CẬP NHẬT PHẦN MỀM (UPDATER)
+        # ═══════════════════════════════════════════════════════════════
+        tab_update = QWidget()
+        form_update = QFormLayout(tab_update)
+        form_update.setContentsMargins(16, 16, 16, 16)
+        form_update.setSpacing(10)
+
+        from core.updater import (
+            get_active_version,
+            check_for_updates_interactive,
+            install_offline_patch_interactive,
+            get_patches_dir,
+            _launch_restart_script
+        )
+
+        active_ver = get_active_version()
+        lbl_cur_ver = QLabel(f"v{active_ver} Enterprise")
+        lbl_cur_ver.setStyleSheet("color:#00FF9D; font-size:13px; font-weight:bold;")
+        form_update.addRow("Phiên bản hiện tại:", lbl_cur_ver)
+
+        # ── 1. Cập nhật trực tuyến (Online OTA) ────────────────────────
+        lbl_ota_hdr = QLabel("1. Cập nhật trực tuyến (Online OTA)")
+        lbl_ota_hdr.setStyleSheet("color:#00D4FF; font-weight:bold; margin-top:6px;")
+        form_update.addRow(lbl_ota_hdr)
+
+        btn_check_update = QtWidgets.QPushButton("🔍 Kiểm Tra Cập Nhật Online")
+        btn_check_update.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0C3322, stop:1 #072015);
+                color: #00FF9D;
+                border: 1px solid #00FF9D;
+                border-radius: 5px;
+                padding: 6px 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: #00FF9D;
+                color: #060B14;
+            }
+        """)
+        btn_check_update.clicked.connect(lambda: check_for_updates_interactive(self))
+        form_update.addRow("Kiểm tra máy chủ:", btn_check_update)
+
+        lbl_ota_desc = QLabel("Tự động kết nối máy chủ để tìm bản vá mới. Khi có bản mới, hệ thống chỉ tải gói vá nhẹ (1–2 MB) và cập nhật tức thì trong 2 giây mà không cần cài lại 460MB.")
+        lbl_ota_desc.setWordWrap(True)
+        lbl_ota_desc.setStyleSheet("color:#7B9BBF; font-size:10px;")
+        form_update.addRow("", lbl_ota_desc)
+
+        # ── 2. Cập nhật ngoại tuyến (Offline Delta Patch) ───────────────
+        lbl_off_hdr = QLabel("2. Cập nhật ngoại tuyến (Offline Delta Patch)")
+        lbl_off_hdr.setStyleSheet("color:#00D4FF; font-weight:bold; margin-top:6px;")
+        form_update.addRow(lbl_off_hdr)
+
+        btn_install_patch = QtWidgets.QPushButton("📁 Nạp File Bản Vá (.zip)...")
+        btn_install_patch.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #142E47, stop:1 #0C1E30);
+                color: #00E5FF;
+                border: 1px solid #00E5FF;
+                border-radius: 5px;
+                padding: 6px 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: #00E5FF;
+                color: #060B14;
+            }
+        """)
+        btn_install_patch.clicked.connect(lambda: install_offline_patch_interactive(self))
+        form_update.addRow("Nạp file thủ công:", btn_install_patch)
+
+        lbl_off_desc = QLabel("Dành cho tàu khảo sát ngầm ngoài khơi không có Internet. Chọn file patch .zip do kỹ sư cung cấp để cập nhật 1-click.")
+        lbl_off_desc.setWordWrap(True)
+        lbl_off_desc.setStyleSheet("color:#7B9BBF; font-size:10px;")
+        form_update.addRow("", lbl_off_desc)
+
+        # ── 3. Khôi phục phiên bản gốc (Rollback) ─────────────────────
+        pdir = get_patches_dir()
+        has_patches = os.path.isdir(pdir) and len(os.listdir(pdir)) > 0
+        btn_rollback = QtWidgets.QPushButton("↺ Khôi Phục Phiên Bản Gốc (Rollback)")
+        btn_rollback.setStyleSheet("""
+            QPushButton {
+                background: #2D1414;
+                color: #FF6666;
+                border: 1px solid #FF4040;
+                border-radius: 5px;
+                padding: 5px 12px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background: #FF4040;
+                color: #FFFFFF;
+            }
+            QPushButton:disabled {
+                background: #1A1A1A;
+                color: #555555;
+                border-color: #333333;
+            }
+        """)
+        def _on_rollback():
+            reply = QtWidgets.QMessageBox.question(
+                self, "Khôi Phục Phiên Bản Gốc",
+                "Bạn có chắc muốn xóa toàn bộ bản vá và quay về phiên bản xuất xưởng gốc ban đầu?",
+                QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+                QtWidgets.QMessageBox.StandardButton.No
+            )
+            if reply == QtWidgets.QMessageBox.StandardButton.Yes:
+                try:
+                    import shutil
+                    shutil.rmtree(pdir)
+                    os.makedirs(pdir, exist_ok=True)
+                    QtWidgets.QMessageBox.information(
+                        self, "Đã Khôi Phục",
+                        "Đã gỡ bỏ toàn bộ bản vá thành công! Ứng dụng sẽ tự khởi động lại về phiên bản gốc."
+                    )
+                    _launch_restart_script(sys.executable)
+                except Exception as e:
+                    QtWidgets.QMessageBox.critical(self, "Lỗi", str(e))
+
+        btn_rollback.clicked.connect(_on_rollback)
+        btn_rollback.setEnabled(has_patches)
+        form_update.addRow("Khôi phục:", btn_rollback)
+
         # Thêm các tab
         self.tabs.addTab(tab_gen, "General")
         self.tabs.addTab(tab_log, "Logging")
@@ -394,6 +525,7 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(tab_smart, "Autopilot")
         self.tabs.addTab(tab_video, "Video & AI")
         self.tabs.addTab(tab_lic, "License")
+        self.tabs.addTab(tab_update, "Updates")
 
         # Dialog Buttons
         btns = QDialogButtonBox(
@@ -547,7 +679,7 @@ class SettingsDialog(QDialog):
     def _save_and_accept(self):
         logs_dir  = self.ed_logs.text().strip()
         media_dir = self.ed_media_path.text().strip() or "D:/GCS_ROV_Media"
-        src_list  = ["udp_h264", "rtsp", "webcam", "file"]
+        src_list  = ["webrtc", "rtsp", "udp_h264", "webcam", "file"]
 
         # Parse GCS lat/lon
         try:
@@ -564,6 +696,7 @@ class SettingsDialog(QDialog):
             "gcs_lat":        gcs_lat,
             "gcs_lng":        gcs_lng,
             "video_source":      src_list[self.cb_vid_source.currentIndex()],
+            "webrtc_url":        self.ed_webrtc_url.text().strip(),
             "udp_video_port":    self.sp_udp_port.value(),
             "rtsp_url":          self.ed_rtsp_url.text().strip(),
             "webcam_index":      self.sp_webcam_idx.value(),

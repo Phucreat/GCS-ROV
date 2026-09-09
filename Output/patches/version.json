@@ -1,0 +1,9 @@
+{
+  "version": "1.1.0",
+  "release_date": "2026-09-09",
+  "changelog": "1. Tích hợp Camera WebRTC siêu mượt (<80ms, 60 FPS) giải mã phần cứng GPU.\n2. Thêm luồng RTSP ngầm 12 FPS cho AI YOLOv8 khi bật AI Detection.\n3. Tích hợp kính ngắm AR HUD và Bounding Box neon trên màn hình WebRTC.\n4. Sửa cổng kết nối RTSP mặc định thành 8555/cam và WebRTC 8889/cam.",
+  "update_type": "patch",
+  "download_url": "https://raw.githubusercontent.com/cncnexora/gcs-rov/main/patches/patch_v1.1.0.zip",
+  "file_size": "91.6 KB",
+  "sha256": "d49406f8fb253a0aa685519fb113541708ec98a6904d9b169182f29aa4a5af0c"
+}

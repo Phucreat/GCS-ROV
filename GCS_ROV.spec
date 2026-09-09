@@ -40,7 +40,7 @@ hiddenimports = [
     'sounddevice', 'speech_recognition', 'requests', 'sqlite3',
     'edge_tts', 'aiohttp', 'asyncio', 'certifi',
     'numpy', 'scipy', 'pybullet', 'json', 'uuid', 'hmac', 'hashlib', 'winreg',
-    'core', 'core.licensing', 'core.physics_engine', 'core.autonomous_controller',
+    'core', 'core.licensing', 'core.physics_engine', 'core.autonomous_controller', 'core.updater',
     'core.models.rov_3thruster', 'core.models.rov_6thruster',
     'database', 'database.db_manager', 'database.telemetry_logger', 'database.report_exporter',
     'network', 'network.mavlink_worker', 'network.slam_udp_receiver', 'network.video_receiver',

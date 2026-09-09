@@ -14,11 +14,27 @@ Sơ đồ dữ liệu:
   Physics Engine  ←── step() ←── QTimer 60 FPS
   GUI Widgets     ←── update ←── ROVMainWindow
 
-Cách chạy:
-  python main.py
-  python main.py --connection udp:0.0.0.0:14550
   python main.py --mock          (chế độ mô phỏng offline)
 """
+
+# ── DYNAMIC PATCH LOADER (Hot-Update Engine) ─────────────────────────
+# Ưu tiên nạp code và tài nguyên từ thư mục patches/ trên đĩa cứng
+# Giúp người dùng cập nhật phần mềm tức thì mà không cần cài lại file .exe 460MB.
+import sys
+import os
+from importlib.machinery import PathFinder
+
+_APP_DIR = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__))
+_PATCH_DIR = os.path.join(_APP_DIR, "patches")
+if os.path.isdir(_PATCH_DIR):
+    if _PATCH_DIR not in sys.path:
+        sys.path.insert(0, _PATCH_DIR)
+    for _i, _finder in enumerate(list(sys.meta_path)):
+        if _finder is PathFinder or (isinstance(_finder, type) and issubclass(_finder, PathFinder)):
+            sys.meta_path.insert(0, sys.meta_path.pop(_i))
+            break
+# ─────────────────────────────────────────────────────────────────────
+
 from GUI.widgets.settings_dialog import SettingsDialog
 from network.slam_udp_receiver import SLAMUDPReceiver
 from network.mavlink_worker import MAVLinkWorker
@@ -96,12 +112,14 @@ try:
 except ImportError:
     HAS_INPUT = False
 
-# ── Feature 1: AR HUD + Video ────────────────────────────────────
+# ── Feature 1: AR HUD + Video + WebRTC ───────────────────────────
 try:
     from GUI.widgets.ar_hud_widget import ARHUDWidget
+    from GUI.widgets.webrtc_player_widget import WebRTCPlayerWidget
     from network.video_receiver import VideoReceiver, VideoSource
     HAS_VIDEO = True
-except ImportError:
+except ImportError as exc:
+    print(f"[Main] Video import notice: {exc}")
     HAS_VIDEO = False
 
 # ── Feature 2: AI Vision ──────────────────────────────────────────
@@ -277,8 +295,11 @@ class ROVMainWindow(QMainWindow):
         self._pressed_keys = set()
 
         # ── Handles cho 5 features nâng cao ──
-        self._video_rx:    object = None
-        self._ar_hud:      object = None
+        self._video_rx:        object = None
+        self._webrtc_widget:   object = None
+        self._video_stack:     object = None
+        self._ai_rtsp_rx:      object = None
+        self._ar_hud:          object = None
         self._ai_proc:     object = None
         self._ai_panel:    object = None
         self._ipc_bus:     object = None
@@ -508,11 +529,11 @@ class ROVMainWindow(QMainWindow):
             self._setup_video_pipeline()
 
     def _setup_video_pipeline(self):
-        """Khởi tạo video pipeline: VideoReceiver → ARHUDWidget → AIVisionProcessor."""
-        src = self.settings.get('video_source', 'udp_h264')
+        """Khởi tạo video pipeline: WebRTC (Primary <80ms) + ARHUDWidget (OpenCV Native) + AIVisionProcessor."""
+        src = self.settings.get('video_source', 'webrtc')
+        webrtc_url = self.settings.get('webrtc_url', 'http://192.168.2.2:8889/cam')
+        rtsp_url = self.settings.get('rtsp_url', 'rtsp://192.168.2.2:8555/cam')
         udp_port = int(self.settings.get('udp_video_port', 5620))
-        rtsp_url = self.settings.get(
-            'rtsp_url', 'rtsp://192.168.2.2:8554/video')
         webcam_idx = int(self.settings.get('webcam_index', 0))
         vid_file = self.settings.get('video_file', '')
         fps = int(self.settings.get('video_fps', 30))
@@ -524,7 +545,7 @@ class ROVMainWindow(QMainWindow):
             target_w, target_h = (int(res_parts[0]), int(
                 res_parts[1])) if len(res_parts) == 2 else (1280, 720)
 
-        # Tạo VideoReceiver theo nguồn
+        # 1. Tạo VideoReceiver theo nguồn (cho OpenCV Native fallback)
         if src == 'udp_h264':
             self._video_rx = VideoReceiver(
                 source_type=VideoSource.UDP_H264,
@@ -543,44 +564,67 @@ class ROVMainWindow(QMainWindow):
                 url_or_index=vid_file,
                 target_fps=fps, target_w=target_w, target_h=target_h
             )
-        else:  # rtsp
+        else:  # rtsp hoặc webrtc (dùng RTSP cho OpenCV fallback)
             self._video_rx = VideoReceiver(
                 source_type=VideoSource.RTSP,
                 url_or_index=rtsp_url,
                 target_fps=fps, target_w=target_w, target_h=target_h
             )
 
-        # ── Embed AR HUD Widget vào khung LIVE CAMERA FEED của GUI chính ──
+        # ── Embed Video Stack vào khung LIVE CAMERA FEED của GUI chính ──
         if hasattr(self.ui, 'frm_simulate_camera'):
             if hasattr(self.ui, 'opw_camera'):
                 self.ui.opw_camera.hide()
             cam_layout = self.ui.verticalLayout_5
-            # Tạo AR HUD Widget nhúng trực tiếp vào main GUI
-            self._ar_hud = ARHUDWidget(parent=self.ui.frm_simulate_camera)
+
+            # Tạo QStackedWidget chứa cả WebRTC (siêu mượt) và AR HUD OpenCV
+            self._video_stack = QtWidgets.QStackedWidget(parent=self.ui.frm_simulate_camera)
+
+            # Slot 0: WebRTC Player Widget (Ưu tiên số 1: <80ms, 60fps)
+            self._webrtc_widget = WebRTCPlayerWidget(
+                webrtc_url=webrtc_url, parent=self._video_stack
+            )
+            self._webrtc_widget.set_hud_enabled(
+                self.settings.get('ar_hud_enabled', True))
+            self._video_stack.addWidget(self._webrtc_widget)
+
+            # Slot 1: AR HUD OpenCV Widget (Fallback cho Webcam/File/UDP)
+            self._ar_hud = ARHUDWidget(parent=self._video_stack)
             self._ar_hud.set_hud_enabled(
                 self.settings.get('ar_hud_enabled', True))
-            cam_layout.addWidget(self._ar_hud, 1)
+            self._video_stack.addWidget(self._ar_hud)
 
-            # Đặt lại stretch cho verticalLayout_5:
-            # Item 0 (lbl_simulate_camera) = 0, Item 1 (opw_camera) = 0, Item 2 (_ar_hud) = 1
+            # Chọn trang hiển thị theo cấu hình
+            if src == 'webrtc':
+                self._video_stack.setCurrentIndex(0)
+            else:
+                self._video_stack.setCurrentIndex(1)
+
+            cam_layout.addWidget(self._video_stack, 1)
             cam_layout.setStretch(0, 0)
             if cam_layout.count() > 1:
                 cam_layout.setStretch(1, 0)
-            cam_layout.setStretch(cam_layout.indexOf(self._ar_hud), 1)
+            cam_layout.setStretch(cam_layout.indexOf(self._video_stack), 1)
         else:
-            # Fallback tạo cửa sổ nổi nếu không tìm thấy frm_simulate_camera
+            # Fallback tạo cửa sổ nổi
             self._ar_hud = ARHUDWidget(parent=None)
             self._ar_hud.setWindowTitle("📹 Live Video + AR HUD")
             self._ar_hud.resize(target_w + 20, target_h + 60)
             self._ar_hud.set_hud_enabled(
                 self.settings.get('ar_hud_enabled', True))
 
-        # Kết nối AR HUD Widget Action signals với main window logic
+        # Kết nối WebRTC signals
+        if self._webrtc_widget:
+            self._webrtc_widget.sig_snapshot_requested.connect(self._take_snapshot)
+            self._webrtc_widget.sig_record_requested.connect(self._on_camera_button)
+            self._webrtc_widget.sig_popout_requested.connect(self._popout_video_window)
+            self._webrtc_widget.sig_switch_to_native.connect(self._switch_to_native_video)
+
+        # Kết nối AR HUD signals
         if self._ar_hud:
             self._ar_hud.sig_snapshot_requested.connect(self._take_snapshot)
             self._ar_hud.sig_record_requested.connect(self._on_camera_button)
-            self._ar_hud.sig_popout_requested.connect(
-                self._popout_video_window)
+            self._ar_hud.sig_popout_requested.connect(self._popout_video_window)
 
         # Kết nối video → HUD + ghi hình (chống tồn đọng hàng đợi Qt signal)
         self._is_rendering_frame = False
@@ -590,7 +634,7 @@ class ROVMainWindow(QMainWindow):
             self._is_rendering_frame = True
             try:
                 self._last_frame = frame
-                if self._ar_hud:
+                if self._ar_hud and self._ar_hud.isVisible():
                     self._ar_hud.set_frame(frame)
                 # Ghi video nếu đang recording
                 if self._is_recording and self._video_writer is not None:
@@ -640,7 +684,30 @@ class ROVMainWindow(QMainWindow):
                 btn_ai.clicked.connect(self._show_ai_control_panel)
                 hdr_layout.insertWidget(idx, btn_ai)
 
-        self._video_rx.start()
+        # Chỉ khởi động OpenCV VideoReceiver nếu nguồn được chọn không phải WebRTC
+        if src != 'webrtc':
+            self._video_rx.start()
+
+    def _switch_to_webrtc_video(self):
+        """Chuyển sang luồng WebRTC siêu mượt (<80ms) cho phi công."""
+        if hasattr(self, '_video_stack') and self._video_stack and self._webrtc_widget:
+            self._video_stack.setCurrentIndex(0)
+            self.settings['video_source'] = 'webrtc'
+            if self._video_rx and self._video_rx.isRunning():
+                self._video_rx.stop()
+            self._webrtc_widget.reload_stream()
+            if hasattr(self, 'power_widget') and self.power_widget:
+                self.power_widget.add_log("🌐 Đã chuyển sang WebRTC Live Feed (<80ms)", "SUCCESS")
+
+    def _switch_to_native_video(self):
+        """Chuyển sang luồng OpenCV Native (Webcam, File hoặc UDP)."""
+        if hasattr(self, '_video_stack') and self._video_stack and self._ar_hud:
+            self._video_stack.setCurrentIndex(1)
+            self.settings['video_source'] = 'rtsp'
+            if self._video_rx and not self._video_rx.isRunning():
+                self._video_rx.start()
+            if hasattr(self, 'power_widget') and self.power_widget:
+                self.power_widget.add_log("📹 Đã chuyển sang OpenCV Native Feed", "INFO")
 
     def _on_quick_video_source_changed(self, index: int):
         """Đổi nhanh nguồn Video trực tiếp từ ComboBox trên GUI chính."""
@@ -758,9 +825,11 @@ class ROVMainWindow(QMainWindow):
         # Kết nối: video frame → AI processor
         if self._video_rx:
             self._video_rx.sig_frame.connect(self._ai_proc.submit_frame)
-        # Kết nối: detections → AR HUD
+        # Kết nối: detections → AR HUD & WebRTC Player
         if self._ar_hud:
             self._ai_proc.sig_detections.connect(self._ar_hud.set_detections)
+        if getattr(self, '_webrtc_widget', None):
+            self._ai_proc.sig_detections.connect(self._webrtc_widget.set_detections)
         # Kết nối: track error → MAVLink yaw/pitch offset
         self._ai_proc.sig_track_error.connect(self._on_track_error)
         # AI control panel (cửa sổ nổi)
@@ -1208,11 +1277,43 @@ class ROVMainWindow(QMainWindow):
                 self._setup_ai_pipeline()
             elif not self._ai_proc.isRunning():
                 self._ai_proc.start()
+
+            # Mở luồng RTSP ngầm (10-15 FPS) nếu đang ở chế độ WebRTC
+            is_webrtc = (self.settings.get('video_source', 'webrtc') == 'webrtc')
+            if is_webrtc:
+                if self._ai_rtsp_rx is None:
+                    rtsp_url = self.settings.get('rtsp_url', 'rtsp://192.168.2.2:8555/cam')
+                    self._ai_rtsp_rx = VideoReceiver(
+                        source_type=VideoSource.RTSP,
+                        url_or_index=rtsp_url,
+                        target_fps=12,
+                        target_w=640,
+                        target_h=480,
+                        parent=self
+                    )
+                    if self._ai_proc:
+                        self._ai_rtsp_rx.sig_frame.connect(self._ai_proc.submit_frame)
+                    self._ai_rtsp_rx.start()
+                    print(f"[Main] Đã bật luồng RTSP ngầm cho AI (12 FPS): {rtsp_url}")
+                    if hasattr(self, 'power_widget') and self.power_widget:
+                        self.power_widget.add_log(f"🤖 Đã kích hoạt luồng AI RTSP ngầm (12 FPS): {rtsp_url}", "SUCCESS")
         else:
+            # Dừng và giải phóng luồng RTSP ngầm nếu đang chạy
+            if self._ai_rtsp_rx is not None:
+                try:
+                    self._ai_rtsp_rx.stop()
+                    self._ai_rtsp_rx.wait(400)
+                except Exception:
+                    pass
+                self._ai_rtsp_rx = None
+                print("[Main] Đã tắt luồng RTSP ngầm của AI")
+
             if self._ai_proc and self._ai_proc.isRunning():
                 self._ai_proc.stop()
             if self._ar_hud:
                 self._ar_hud.set_detections([])
+            if getattr(self, '_webrtc_widget', None):
+                self._webrtc_widget.set_detections([])
             if hasattr(self, 'power_widget') and self.power_widget:
                 self.power_widget.add_log("🤖 AI Detection đã tắt", "INFO")
 
@@ -1706,9 +1807,24 @@ class ROVMainWindow(QMainWindow):
                 self._seafloor_mesh.set_rov_position(
                     self._pos_ned[0], self._pos_ned[1], self._depth
                 )
-        # ── Feature 1: Update AR HUD telemetry ───────────────────
+        # ── Feature 1: Update AR HUD & WebRTC telemetry ───────────────────
         if self._ar_hud:
             self._ar_hud.update_telemetry(
+                roll=self._roll,
+                pitch=self._pitch,
+                yaw=self._yaw,
+                depth=self._depth,
+                heading=self._heading,
+                speed=float(np.linalg.norm(self._vel_ned)),
+                voltage=self._voltage,
+                current=self._current,
+                pct=int(self._current),
+                signal_pct=self._link_quality,
+                mode=self._flight_mode,
+                armed='ARMED' in self._sys_status.upper()
+            )
+        if getattr(self, '_webrtc_widget', None):
+            self._webrtc_widget.update_telemetry(
                 roll=self._roll,
                 pitch=self._pitch,
                 yaw=self._yaw,
@@ -1860,27 +1976,34 @@ class ROVMainWindow(QMainWindow):
             self._take_snapshot()
 
     def _take_snapshot(self):
-        """Chụp ảnh từ frame hiện tại và lưu file PNG."""
-        if self._last_frame is None:
+        """Chụp ảnh từ frame hiện tại (WebRTC hoặc OpenCV) và lưu file PNG."""
+        is_webrtc_active = (getattr(self, '_webrtc_widget', None) is not None and 
+                            self._webrtc_widget.isVisible())
+        if not is_webrtc_active and self._last_frame is None:
             QtWidgets.QMessageBox.warning(
                 self, "Không có video",
-                "Chưa có luồng video. Kiểm tra kết nối camera và mở cửa sổ Video."
+                "Chưa có luồng video. Kiểm tra kết nối camera."
             )
             return
         try:
-            import cv2
             import time as _t
             ts = _t.strftime("%Y%m%d_%H%M%S")
             path = os.path.join(self._get_media_dir(), f"snap_{ts}.png")
-            cv2.imwrite(path, self._last_frame)
+
+            if is_webrtc_active:
+                pix = self._webrtc_widget.grab_snapshot()
+                pix.save(path, "PNG")
+            else:
+                import cv2
+                cv2.imwrite(path, self._last_frame)
+
             print(f"[Camera] Snapshot saved: {path}")
-            # Hiển thị thông báo nhỏ
-            self.ui.pbtn_camera.setToolTip(
-                f"Snapshot: {os.path.basename(path)}")
-            # Hỏi có muốn bắt đầu ghi video không
+            if hasattr(self.ui, 'pbtn_camera'):
+                self.ui.pbtn_camera.setToolTip(
+                    f"Snapshot: {os.path.basename(path)}")
             reply = QtWidgets.QMessageBox.question(
                 self, "📸 Snapshot đã lưu",
-                f"Snapshot: {path}\n\nBat dau ghi video khong?",
+                f"Snapshot: {path}\n\nBắt đầu ghi video không?",
                 QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
                 QtWidgets.QMessageBox.StandardButton.No
             )
@@ -1913,6 +2036,8 @@ class ROVMainWindow(QMainWindow):
             print(f"[Camera] Recording started: {path}")
             if self._ar_hud:
                 self._ar_hud.set_recording_status(True)
+            if getattr(self, '_webrtc_widget', None):
+                self._webrtc_widget.set_recording_status(True)
             if hasattr(self, 'power_widget') and self.power_widget:
                 self.power_widget.add_log(
                     f"🔴 Đang ghi hình: {os.path.basename(path)}", "WARNING")
@@ -1920,6 +2045,8 @@ class ROVMainWindow(QMainWindow):
             self._is_recording = False
             if self._ar_hud:
                 self._ar_hud.set_recording_status(False)
+            if getattr(self, '_webrtc_widget', None):
+                self._webrtc_widget.set_recording_status(False)
             QtWidgets.QMessageBox.critical(self, "Lỗi Recording", str(e))
 
     def _stop_recording(self):
@@ -1930,6 +2057,8 @@ class ROVMainWindow(QMainWindow):
             self._video_writer = None
         if self._ar_hud:
             self._ar_hud.set_recording_status(False)
+        if getattr(self, '_webrtc_widget', None):
+            self._webrtc_widget.set_recording_status(False)
         # Khôi phục style nút
         self.ui.pbtn_camera.setStyleSheet("")
         self.ui.pbtn_camera.setToolTip("Chụp ảnh / Ghi video")
@@ -1960,34 +2089,43 @@ class ROVMainWindow(QMainWindow):
         Áp dụng cài đặt mới động trực tiếp mà KHÔNG reset vị trí,
         KHÔNG dừng các worker đang chạy và KHÔNG gián đoạn hoạt động.
         """
-        # 1. Cập nhật Video Receiver nếu có
-        if self._video_rx:
-            src = self.settings.get('video_source', 'udp_h264')
-            if src == 'udp_h264':
-                port = int(self.settings.get('udp_video_port', 5620))
-                self._video_rx.set_source(VideoSource.UDP_H264, port)
-            elif src == 'webcam':
-                idx = int(self.settings.get('webcam_index', 0))
-                self._video_rx.set_source(VideoSource.WEBCAM, idx)
-            elif src == 'rtsp':
-                url = self.settings.get(
-                    'rtsp_url', 'rtsp://192.168.2.2:8554/video')
-                self._video_rx.set_source(VideoSource.RTSP, url)
-            elif src == 'file':
-                path = self.settings.get('video_file', '')
-                self._video_rx.set_source(VideoSource.FILE, path)
+        # 1. Cập nhật Video Receiver / WebRTC nếu có
+        src = self.settings.get('video_source', 'webrtc')
+        webrtc_url = self.settings.get('webrtc_url', 'http://192.168.2.2:8889/cam')
+        rtsp_url = self.settings.get('rtsp_url', 'rtsp://192.168.2.2:8555/cam')
+
+        if src == 'webrtc':
+            self._switch_to_webrtc_video()
+            if getattr(self, '_webrtc_widget', None):
+                self._webrtc_widget.set_webrtc_url(webrtc_url)
+        else:
+            self._switch_to_native_video()
+            if self._video_rx:
+                if src == 'udp_h264':
+                    port = int(self.settings.get('udp_video_port', 5620))
+                    self._video_rx.set_source(VideoSource.UDP_H264, port)
+                elif src == 'webcam':
+                    idx = int(self.settings.get('webcam_index', 0))
+                    self._video_rx.set_source(VideoSource.WEBCAM, idx)
+                elif src == 'rtsp':
+                    self._video_rx.set_source(VideoSource.RTSP, rtsp_url)
+                elif src == 'file':
+                    path = self.settings.get('video_file', '')
+                    self._video_rx.set_source(VideoSource.FILE, path)
 
             # Đồng bộ lại ComboBox chọn nhanh nguồn video
             if hasattr(self, 'cb_quick_vid_src'):
-                map_idx = {'webcam': 0, 'udp_h264': 1, 'rtsp': 2, 'file': 3}
+                map_idx = {'webrtc': 0, 'webcam': 1, 'udp_h264': 2, 'rtsp': 3, 'file': 4}
                 self.cb_quick_vid_src.blockSignals(True)
                 self.cb_quick_vid_src.setCurrentIndex(map_idx.get(src, 0))
                 self.cb_quick_vid_src.blockSignals(False)
 
-        # 2. Cập nhật AR HUD Overlay
+        # 2. Cập nhật AR HUD & WebRTC Overlay
+        hud_on = self.settings.get('ar_hud_enabled', True)
         if self._ar_hud:
-            self._ar_hud.set_hud_enabled(
-                self.settings.get('ar_hud_enabled', True))
+            self._ar_hud.set_hud_enabled(hud_on)
+        if getattr(self, '_webrtc_widget', None):
+            self._webrtc_widget.set_hud_enabled(hud_on)
 
         # 3. Cập nhật AI Vision Processor
         ai_enabled = self.settings.get('ai_detection_enabled', False)
@@ -2286,9 +2424,10 @@ def main():
         "gcs_lat":       0.0,
         "gcs_lng":       0.0,
         # Video
-        "video_source":  "udp_h264",
+        "video_source":  "webrtc",
+        "webrtc_url":    "http://192.168.2.2:8889/cam",
         "udp_video_port": 5620,
-        "rtsp_url":      "rtsp://192.168.2.2:8554/video",
+        "rtsp_url":      "rtsp://192.168.2.2:8555/cam",
         "video_fps":     30,
         "video_resolution": "1280x720",
         "ar_hud_enabled": True,
@@ -2307,6 +2446,12 @@ def main():
         "heartbeat_hz":  1,
         "auto_reset_origin": True
     }
+
+    # Cấu hình OpenGL context sharing cho QWebEngineView và OpenGL 3D Widget
+    try:
+        QtCore.QCoreApplication.setAttribute(QtCore.Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
+    except Exception:
+        pass
 
     app = QApplication(sys.argv)
     app.setApplicationName("E3 LAB ROV GCS")

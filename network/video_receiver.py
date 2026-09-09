@@ -324,7 +324,8 @@ class VideoReceiver(QThread):
             if source_type in (VideoSource.RTSP, VideoSource.UDP_H264, VideoSource.WEBCAM):
                 # ── Luồng mạng / Camera thực: sử dụng Dedicated Fast Grabber để triệt tiêu độ trễ ──
                 grabber = _LiveStreamGrabber(cap)
-                grabber.start()
+                last_emit_t: float = 0.0
+                min_interval: float = 1.0 / max(1, self._target_fps) if self._target_fps > 0 else 0.0
 
                 while self._running:
                     # Kiểm tra xem có chuyển nguồn video từ bên ngoài không
@@ -371,12 +372,19 @@ class VideoReceiver(QThread):
                             grabber.start()
                         continue
 
+                    # Throttle FPS nếu cấu hình (VD: luồng AI ngầm chạy ở 10-15 FPS để tối ưu CPU)
+                    now_t = time.monotonic()
+                    if min_interval > 0 and (now_t - last_emit_t) < min_interval:
+                        time.sleep(0.002)
+                        continue
+
                     # Lấy khung hình MỚI NHẤT từ Grabber (không tồn đọng buffer trong hàng đợi)
                     frame = grabber.get_latest_frame()
                     if frame is None:
                         time.sleep(0.002)
                         continue
 
+                    last_emit_t = now_t
                     reconnect_count = 0
 
                     # Resize (nếu cấu hình) và phát signal hiển thị
