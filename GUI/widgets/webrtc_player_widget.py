@@ -44,17 +44,41 @@ from PyQt6.QtWidgets import (
 # ---------------------------------------------------------------------------
 _INJECTED_OVERLAY_SCRIPT = """
 (function() {
-    // 1. Force all HTML5 videos to play smoothly and continuously
+    // 1. Force all HTML5 videos to play smoothly and continuously with responsive styling
+    window._videoFitMode = window._videoFitMode || 'contain';
+    window.setVideoFitMode = function(mode) {
+        window._videoFitMode = mode;
+        const videos = document.querySelectorAll('video');
+        for (let v of videos) {
+            v.style.objectFit = mode;
+        }
+    };
+    window.addEventListener('dblclick', function() {
+        const next = (window._videoFitMode === 'contain') ? 'cover' : 'contain';
+        window.setVideoFitMode(next);
+    });
+
     function playAllVideos() {
+        document.documentElement.style.margin = '0';
+        document.documentElement.style.padding = '0';
+        document.documentElement.style.overflow = 'hidden';
+        document.documentElement.style.backgroundColor = '#040810';
+        if (document.body) {
+            document.body.style.margin = '0';
+            document.body.style.padding = '0';
+            document.body.style.overflow = 'hidden';
+            document.body.style.backgroundColor = '#040810';
+        }
         const videos = document.querySelectorAll('video');
         for (let v of videos) {
             v.muted = true;
             v.autoplay = true;
             v.playsInline = true;
             v.setAttribute('playsinline', '');
-            v.style.objectFit = 'contain';
-            v.style.width = '100vw';
-            v.style.height = '100vh';
+            v.style.objectFit = window._videoFitMode || 'contain';
+            v.style.width = '100%';
+            v.style.height = '100%';
+            v.style.backgroundColor = '#040810';
             if (v.paused) {
                 const p = v.play();
                 if (p && p.catch) {
@@ -123,7 +147,6 @@ _INJECTED_OVERLAY_SCRIPT = """
         // --- DRAW AI DETECTIONS ---
         if (st.aiEnabled && st.detections && st.detections.length > 0) {
             for (let d of st.detections) {
-                // d: { x1, y1, x2, y2, class_name, conf } where coords are 0..1
                 const x = d.x1 * W;
                 const y = d.y1 * H;
                 const w = (d.x2 - d.x1) * W;
@@ -172,130 +195,18 @@ _INJECTED_OVERLAY_SCRIPT = """
                 ctx.fillText(label, x + 4, Math.max(12, y - 6));
             }
         }
-
-        // --- DRAW AR HUD TELEMETRY OVERLAY ---
-        if (st.hudEnabled) {
-            const t = st.telemetry;
-            const cx = W / 2;
-            const cy = H / 2;
-
-            // 1. Center Crosshair
-            ctx.save();
-            ctx.strokeStyle = 'rgba(0, 229, 255, 0.6)';
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.moveTo(cx - 20, cy); ctx.lineTo(cx - 6, cy);
-            ctx.moveTo(cx + 6, cy); ctx.lineTo(cx + 20, cy);
-            ctx.moveTo(cx, cy - 20); ctx.lineTo(cx, cy - 6);
-            ctx.moveTo(cx, cy + 6); ctx.lineTo(cx, cy + 20);
-            ctx.stroke();
-            // Center pip
-            ctx.fillStyle = '#00FF9D';
-            ctx.beginPath();
-            ctx.arc(cx, cy, 2, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
-
-            // 2. Pitch & Roll Horizon Ladder
-            ctx.save();
-            ctx.translate(cx, cy);
-            ctx.rotate((-t.roll * Math.PI) / 180);
-            ctx.translate(0, (t.pitch * 3.5)); // 3.5px per deg pitch
-            ctx.strokeStyle = 'rgba(0, 255, 157, 0.5)';
-            ctx.lineWidth = 1.5;
-
-            // Pitch rungs
-            for (let deg = -20; deg <= 20; deg += 10) {
-                if (deg === 0) {
-                    ctx.strokeStyle = 'rgba(0, 229, 255, 0.8)';
-                    ctx.beginPath();
-                    ctx.moveTo(-50, 0); ctx.lineTo(-15, 0);
-                    ctx.moveTo(15, 0); ctx.lineTo(50, 0);
-                    ctx.stroke();
-                } else {
-                    const py = -deg * 3.5;
-                    ctx.strokeStyle = 'rgba(0, 255, 157, 0.4)';
-                    ctx.beginPath();
-                    ctx.moveTo(-30, py); ctx.lineTo(-15, py);
-                    ctx.moveTo(15, py); ctx.lineTo(30, py);
-                    ctx.stroke();
-                }
-            }
-            ctx.restore();
-
-            // 3. Top Heading Tape (Compass)
-            ctx.save();
-            const compY = 28;
-            ctx.fillStyle = 'rgba(6, 11, 20, 0.7)';
-            ctx.fillRect(cx - 100, 10, 200, 28);
-            ctx.strokeStyle = '#1D3554';
-            ctx.strokeRect(cx - 100, 10, 200, 28);
-
-            ctx.fillStyle = '#00E5FF';
-            ctx.font = 'bold 12px "Consolas", monospace';
-            ctx.textAlign = 'center';
-            const hdg = Math.round(t.heading || 0);
-            ctx.fillText(`HDG: ${hdg.toString().padStart(3, '0')}°`, cx, compY + 2);
-            ctx.restore();
-
-            // 4. Depth Indicator (Left side)
-            ctx.save();
-            const depX = 40;
-            ctx.fillStyle = 'rgba(6, 11, 20, 0.7)';
-            ctx.fillRect(depX - 25, cy - 60, 65, 120);
-            ctx.strokeStyle = '#1D3554';
-            ctx.strokeRect(depX - 25, cy - 60, 65, 120);
-
-            ctx.fillStyle = '#7ECFFF';
-            ctx.font = '10px "Segoe UI", sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText('DEPTH', depX + 7, cy - 42);
-            ctx.font = 'bold 16px "Rajdhani", sans-serif';
-            ctx.fillStyle = '#00FF9D';
-            ctx.fillText(`${(t.depth || 0.0).toFixed(1)}m`, depX + 7, cy - 18);
-            ctx.restore();
-
-            // 5. Battery & Power Status (Top Right)
-            ctx.save();
-            ctx.fillStyle = 'rgba(6, 11, 20, 0.7)';
-            ctx.fillRect(W - 130, 10, 120, 48);
-            ctx.strokeStyle = '#1D3554';
-            ctx.strokeRect(W - 130, 10, 120, 48);
-
-            ctx.fillStyle = '#7ECFFF';
-            ctx.font = '10px "Segoe UI", sans-serif';
-            ctx.fillText('POWER', W - 120, 24);
-
-            const vStr = `${(t.voltage || 16.8).toFixed(1)}V`;
-            const pctStr = `${Math.round(t.pct || 100)}%`;
-            ctx.font = 'bold 12px "Consolas", monospace';
-            ctx.fillStyle = (t.pct < 20) ? '#FF4040' : '#00FF9D';
-            ctx.fillText(`BAT: ${pctStr} (${vStr})`, W - 120, 42);
-            ctx.restore();
-
-            // 6. Mode & Armed Banner (Top Left)
-            ctx.save();
-            ctx.fillStyle = 'rgba(6, 11, 20, 0.7)';
-            ctx.fillRect(10, 10, 130, 48);
-            ctx.strokeStyle = '#1D3554';
-            ctx.strokeRect(10, 10, 130, 48);
-
-            ctx.fillStyle = t.armed ? '#FF4040' : '#A0B2C6';
-            ctx.font = 'bold 11px "Rajdhani", sans-serif';
-            ctx.fillText(t.armed ? '● ARMED' : '○ DISARMED', 20, 26);
-
-            ctx.fillStyle = '#00E5FF';
-            ctx.font = 'bold 12px "Consolas", monospace';
-            ctx.fillText(`MODE: ${t.mode || 'MANUAL'}`, 20, 44);
-            ctx.restore();
-        }
     };
 
-    // Continuous render loop at 60 FPS for silky-smooth HUD animation
+    // Render loop triggered when AI detections change
     if (!window._hudLoopRunning) {
         window._hudLoopRunning = true;
         function loop() {
-            if (window.renderRovOverlay) window.renderRovOverlay();
+            if (window.renderRovOverlay && window._rovState && window._rovState.aiEnabled && window._rovState.detections && window._rovState.detections.length > 0) {
+                window.renderRovOverlay();
+            } else if (canvas) {
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
             requestAnimationFrame(loop);
         }
         requestAnimationFrame(loop);
@@ -457,14 +368,6 @@ class WebRTCPlayerWidget(QWidget):
 
         top_lay.addStretch(1)
 
-        # Button: HUD Toggle
-        self.btn_hud = QPushButton("📐 HUD")
-        self.btn_hud.setCheckable(True)
-        self.btn_hud.setChecked(True)
-        self.btn_hud.setToolTip("Bật / Tắt lớp kính ngắm AR HUD")
-        self.btn_hud.clicked.connect(self._on_hud_toggle)
-        top_lay.addWidget(self.btn_hud)
-
         # Button: Snapshot
         self.btn_snap = QPushButton("📸 SNAP")
         self.btn_snap.setToolTip("Chụp ảnh nhanh màn hình điều khiển")
@@ -482,6 +385,13 @@ class WebRTCPlayerWidget(QWidget):
         self.btn_reload.setToolTip("Khởi động lại luồng WebRTC")
         self.btn_reload.clicked.connect(self.reload_stream)
         top_lay.addWidget(self.btn_reload)
+
+        # Button: Fit Mode (Contain / Cover)
+        self._fit_mode = 'contain'
+        self.btn_fit = QPushButton("🔲 16:9")
+        self.btn_fit.setToolTip("Chuyển đổi: Chuẩn 16:9 (Contain) / Tràn viền (Cover) [Nhấp đúp vào video cũng được]")
+        self.btn_fit.clicked.connect(self.toggle_fit_mode)
+        top_lay.addWidget(self.btn_fit)
 
         # Button: Switch to Native OpenCV
         self.btn_native = QPushButton("📹 OPENCV")
@@ -642,13 +552,31 @@ class WebRTCPlayerWidget(QWidget):
         self.lbl_status.setStyleSheet("color: #FFC800; font-size: 10px;")
         self.load_stream(self._webrtc_url)
 
+    def toggle_fit_mode(self):
+        """Chuyển đổi giữa giữ chuẩn tỉ lệ 16:9 (Contain) và tràn viền lấp đầy khung hình (Cover)."""
+        if getattr(self, '_fit_mode', 'contain') == 'contain':
+            self._fit_mode = 'cover'
+            if hasattr(self, 'btn_fit'):
+                self.btn_fit.setText("🔲 FIT")
+                self.btn_fit.setToolTip("Đang Tràn Viền (Cover). Bấm để về Chuẩn 16:9")
+        else:
+            self._fit_mode = 'contain'
+            if hasattr(self, 'btn_fit'):
+                self.btn_fit.setText("🔲 16:9")
+                self.btn_fit.setToolTip("Đang Chuẩn 16:9 (Contain). Bấm để Tràn Viền")
+        if self._is_connected:
+            self._web_view.page().runJavaScript(
+                f"if (window.setVideoFitMode) window.setVideoFitMode('{self._fit_mode}');"
+            )
+
     def set_webrtc_url(self, url: str):
         self._webrtc_url = url.strip()
         self.reload_stream()
 
     def set_hud_enabled(self, enabled: bool):
         self._hud_enabled = bool(enabled)
-        self.btn_hud.setChecked(self._hud_enabled)
+        if hasattr(self, 'btn_hud'):
+            self.btn_hud.setChecked(self._hud_enabled)
         self._sync_overlay_state()
 
     def set_ai_enabled(self, enabled: bool):
