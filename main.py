@@ -374,6 +374,13 @@ class ROVMainWindow(QMainWindow):
         self._inject_telemetry_table()
         self._setup_telemetry_table()
 
+        # Tự động kiểm tra bản cập nhật mới trong nền nếu có kết nối mạng (sau khi mở app 3.5s)
+        try:
+            from core.updater import check_for_updates_background
+            QtCore.QTimer.singleShot(3500, lambda: check_for_updates_background(self))
+        except Exception:
+            pass
+
         # Loại bỏ hoàn toàn khoảng viền thừa (Zero outer margins)
         if hasattr(self.ui, 'verticalLayout'):
             self.ui.verticalLayout.setContentsMargins(0, 0, 0, 0)

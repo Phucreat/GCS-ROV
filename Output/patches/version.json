@@ -1,9 +1,9 @@
 {
   "version": "1.1.0",
-  "release_date": "2026-09-09",
-  "changelog": "v1.1.0 Official Subsea Release:\n- WebRTC Ultra Low Latency (<80ms, 60 FPS) làm màn hình lái chính mặc định.\n- Đã loại bỏ hoàn toàn Webcam và Video File khỏi cấu hình Settings.\n- Sửa lỗi video: hỗ trợ chuẩn RTSP 8554 (BlueOS & Cockpit), WebRTC và UDP H.264.\n- Tích hợp kính ngắm AR HUD và Patch Loader Hook.",
-  "download_url": "",
-  "file_size": "20 MB",
+  "release_date": "2026-09-16",
+  "changelog": "1. Hiển thị WebRTC video độ trễ cực thấp (< 0.1s), mượt mà 60 FPS.\n2. Tỉ lệ khung hình chuẩn 16:9, thêm nút phóng to [🔲 16:9 / FIT] và nhấp đúp full frame.\n3. Tinh chỉnh giao diện hiển thị hình ảnh camera sạch sẽ, loại bỏ HUD đè mờ màn hình.\n4. Tích hợp tính năng tự động kiểm tra và cập nhật bản vá từ xa (OTA).",
   "update_type": "patch",
-  "default_video_source": "webrtc"
+  "download_url": "https://github.com/Phucreat/GCS-ROV-Release/releases/download/v1.1.0/patch_v1.1.0.zip",
+  "file_size": "93.2 KB",
+  "sha256": "108816f0b5fc11ff853190be31af95a3c8017d8b0bb9105e0aac740de9b6b6ed"
 }

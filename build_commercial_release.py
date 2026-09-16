@@ -126,7 +126,7 @@ def main():
     print(f"✅ Inno Setup hoàn tất đóng gói trong {dur_iscc:.1f}s.")
 
     # 6. Summary & Checksum
-    final_installer = os.path.join(output_dir, "Setup_CNC_NExora_GCS_v1.0.exe")
+    final_installer = os.path.join(output_dir, "Setup_CNC_NExora_GCS_v1.1.0.exe")
     if os.path.exists(final_installer):
         fsize = os.path.getsize(final_installer)
         fhash = get_file_sha256(final_installer)
@@ -140,7 +140,7 @@ def main():
         print(f"🔒 Checksum (SHA-256)   : {fhash}")
         print(f"⏱️ Tổng thời gian xử lý  : {total_time:.1f} giây")
         print("="*70)
-        print("\n👉 Bạn có thể gửi trực tiếp file 'Setup_CNC_NExora_GCS_v1.0.exe' cho khách hàng.")
+        print("\n👉 Bạn có thể gửi trực tiếp file 'Setup_CNC_NExora_GCS_v1.1.0.exe' cho khách hàng.")
         print("👉 Khách hàng chỉ cần bấm đúp chuột để cài đặt và sử dụng ngay lập tức 100% độc lập!\n")
     else:
         print(f"❌ Không tìm thấy tệp cài đặt tại: {final_installer}")

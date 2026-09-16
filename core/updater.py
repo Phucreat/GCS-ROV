@@ -42,12 +42,12 @@ from PyQt6.QtWidgets import (
 # CONSTANTS & CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
 
-CURRENT_VERSION = "1.0.0"
+CURRENT_VERSION = "1.1.0"
 APP_DISPLAY_NAME = "CNC NExora GCS"
 
-# URL mặc định kiểm tra cập nhật (có thể cấu hình trỏ sang GitHub Releases hoặc Server riêng)
+# URL mặc định kiểm tra cập nhật (trỏ sang kho Public Release trên GitHub)
 DEFAULT_UPDATE_CHECK_URL = (
-    "https://raw.githubusercontent.com/cncnexora/gcs-rov/main/version.json"
+    "https://raw.githubusercontent.com/Phucreat/GCS-ROV-Release/main/version.json"
 )
 
 
@@ -547,6 +547,25 @@ def check_for_updates_interactive(parent_widget=None, check_url: str = DEFAULT_U
     # Giữ reference để không bị GC thu hồi
     if parent_widget:
         parent_widget._active_update_checker = checker
+
+
+def check_for_updates_background(parent_widget=None, check_url: str = DEFAULT_UPDATE_CHECK_URL):
+    """
+    Tự động kiểm tra cập nhật trong nền khi ứng dụng khởi động.
+    Chỉ hiện dialog thông báo khi CÓ bản cập nhật mới.
+    Hoàn toàn im lặng nếu đã là bản mới nhất hoặc không có mạng Internet (tránh làm phiền phi công).
+    """
+    checker = UpdateCheckerWorker(check_url=check_url, parent=parent_widget)
+
+    def _on_update(info: UpdateInfo):
+        dlg = UpdateDialog(info, parent=parent_widget)
+        dlg.exec()
+
+    checker.sig_update_available.connect(_on_update)
+    checker.start()
+
+    if parent_widget:
+        parent_widget._bg_update_checker = checker
 
 
 def install_offline_patch_interactive(parent_widget=None) -> bool:

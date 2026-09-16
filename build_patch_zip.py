@@ -30,11 +30,14 @@ os.makedirs(OUTPUT_PATCHES_DIR, exist_ok=True)
 # Phiên bản cập nhật mới
 PATCH_VERSION = "1.1.0"
 RELEASE_DATE = datetime.now().strftime("%Y-%m-%d")
+GITHUB_USER = "Phucreat"
+GITHUB_RELEASE_REPO = "GCS-ROV-Release"
+
 CHANGELOG = (
-    "1. Sửa triệt để lỗi không có video trên cả 3 cấu hình WebRTC, RTSP, UDP H.264.\n"
-    "2. Cập nhật RTSP chuẩn cổng 8554 (rtsp://192.168.2.2:8554/video) khớp BlueOS & Cockpit.\n"
-    "3. Sửa giải mã FFmpeg TCP loại bỏ lỗi probesize, tự động quét và duy trì kết nối liên tục.\n"
-    "4. Tối ưu WebRTC QWebEngine cấp quyền media và tự động phát không bị đen màn hình."
+    "1. Hiển thị WebRTC video độ trễ cực thấp (< 0.1s), mượt mà 60 FPS.\n"
+    "2. Tỉ lệ khung hình chuẩn 16:9, thêm nút phóng to [🔲 16:9 / FIT] và nhấp đúp full frame.\n"
+    "3. Tinh chỉnh giao diện hiển thị hình ảnh camera sạch sẽ, loại bỏ HUD đè mờ màn hình.\n"
+    "4. Tích hợp tính năng tự động kiểm tra và cập nhật bản vá từ xa (OTA)."
 )
 
 # Danh sách các tệp và thư mục đưa vào gói Patch
@@ -113,7 +116,7 @@ def build_patch():
         "release_date": RELEASE_DATE,
         "changelog": CHANGELOG,
         "update_type": "patch",
-        "download_url": f"https://raw.githubusercontent.com/cncnexora/gcs-rov/main/patches/{zip_filename}",
+        "download_url": f"https://github.com/{GITHUB_USER}/{GITHUB_RELEASE_REPO}/releases/download/v{PATCH_VERSION}/{zip_filename}",
         "file_size": file_size_str,
         "sha256": sha256_hash,
     }
