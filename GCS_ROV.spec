@@ -50,13 +50,25 @@ hiddenimports = [
 ]
 
 try:
+    datas += collect_data_files('OpenGL')
+except Exception:
+    pass
+
+try:
+    hiddenimports += collect_submodules('OpenGL')
+except Exception:
+    pass
+
+try:
     hiddenimports += collect_submodules('ultralytics')
 except Exception:
     pass
 
+PROJECT_DIR = os.path.dirname(os.path.abspath(SPEC)) if 'SPEC' in locals() else os.path.abspath('.')
+
 a = Analysis(
     ['main.py'],
-    pathex=['D:\\python\\GCS_ROV'],
+    pathex=[PROJECT_DIR],
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,

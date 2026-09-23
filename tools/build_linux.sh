@@ -36,6 +36,8 @@ echo ""
 echo "🚀 [1/2] Đang biên dịch Standalone Linux Binary (PyInstaller)..."
 pyinstaller --noconfirm --windowed --name=GCS_ROV \
     --icon=GUI/img/iconapp.ico \
+    --collect-all OpenGL \
+    --collect-all pyqtgraph \
     --add-data "GUI:GUI" \
     --add-data "AI:AI" \
     --add-data "assets:assets" \
