@@ -56,8 +56,9 @@ pyinstaller --noconfirm --windowed --name=GCS_ROV \
     --add-data "LICENSE.txt:." \
     main.py
 
-# 4. Cấp quyền thực thi và tạo script khởi chạy run.sh
+# 4. Cấp quyền thực thi và đồng bộ các file mô hình 3D CAD
 chmod +x dist/GCS_ROV/GCS_ROV
+cp -f 3DC.obj 3DC.mtl 6DC.obj 6DC.mtl yolov8n.pt yolov8s.pt LICENSE.txt dist/GCS_ROV/ 2>/dev/null || true
 
 cat << 'EOF' > dist/GCS_ROV/run.sh
 #!/usr/bin/env bash

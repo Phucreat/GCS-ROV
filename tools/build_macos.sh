@@ -55,6 +55,8 @@ pyinstaller --noconfirm --windowed --name="CNC_NExora_GCS" \
     --add-data "LICENSE.txt:." \
     main.py
 
+cp -f 3DC.obj 3DC.mtl 6DC.obj 6DC.mtl yolov8n.pt yolov8s.pt LICENSE.txt dist/CNC_NExora_GCS.app/Contents/MacOS/ 2>/dev/null || true
+
 # 4. Đóng gói đĩa cài đặt Apple DMG (Dùng tiện ích hdiutil có sẵn trên Mac)
 echo ""
 echo "💿 [2/2] Đang tạo đĩa cài đặt Apple Disk Image (.dmg)..."

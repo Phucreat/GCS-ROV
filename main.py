@@ -1583,28 +1583,45 @@ class ROVMainWindow(QMainWindow):
     # KHỞI TẠO MODEL ROV
     # ----------------------------------------------------------
     def find_cad_file(self, model_name: str) -> str:
-        """Tự động tìm kiếm file CAD tương ứng với model trong các thư mục dự án."""
-        name_lower = model_name.lower().strip()
+        """Tự động tìm kiếm file CAD tương ứng với model trong các thư mục dự án (hỗ trợ Windows, Linux, macOS)."""
+        model_clean = model_name.strip()
         search_dirs = [
-            os.path.join(PROJECT_ROOT, "assets"),
+            _APP_DIR,
             PROJECT_ROOT,
+            os.path.join(_APP_DIR, "_internal"),
+            os.path.join(PROJECT_ROOT, "_internal"),
+            getattr(sys, "_MEIPASS", ""),
+            os.path.join(getattr(sys, "_MEIPASS", ""), "_internal"),
+            os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, "frozen", False) else "",
+            os.path.join(PROJECT_ROOT, "assets"),
+            os.path.join(_APP_DIR, "assets"),
             os.path.join(PROJECT_ROOT, "GUI", "img"),
         ]
-        extensions = [".stl", ".STL", ".obj", ".OBJ"]
-        patterns = [
-            f"rov_{name_lower}",
-            f"{name_lower}",
-            f"rov_{name_lower}_model",
-            f"{name_lower}_model",
-        ]
+
+        target_bases = {
+            model_clean.lower(),
+            f"rov_{model_clean}".lower(),
+            f"{model_clean}_model".lower(),
+            f"rov_{model_clean}_model".lower(),
+        }
+        valid_exts = {".stl", ".obj"}
+
         for d in search_dirs:
-            if not os.path.exists(d):
+            if not d or not os.path.isdir(d):
                 continue
-            for pat in patterns:
-                for ext in extensions:
-                    p = os.path.join(d, f"{pat}{ext}")
-                    if os.path.exists(p):
-                        return p
+            try:
+                # Quét không phân biệt chữ hoa/thường (case-insensitive) cho Linux & macOS
+                for fname in os.listdir(d):
+                    base, ext = os.path.splitext(fname)
+                    if ext.lower() in valid_exts and base.lower() in target_bases:
+                        full_p = os.path.join(d, fname)
+                        if os.path.isfile(full_p):
+                            print(f"[CAD] ✅ Đã tìm thấy mô hình CAD: {full_p}")
+                            return full_p
+            except Exception as e:
+                print(f"[CAD] Lỗi quét thư mục {d}: {e}")
+
+        print(f"[CAD] ⚠️ Không tìm thấy file CAD cho model {model_name}")
         return ""
 
     def _switch_model(self, model_name: str):
