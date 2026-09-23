@@ -1,19 +1,30 @@
+# CNC NExora GCS - Cross-Platform Requirements (Windows, Linux, macOS)
+# ======================================================================
+
+# ── Core GUI & 3D Engine ───────────────────────────────────────────────
 PyQt6>=6.4.0
-pyqtgraph>=0.13.0
-pybullet>=3.2.5
+PyQt6-WebEngine>=6.4.0       # Trình phát WebRTC Camera siêu mượt
+pyqtgraph>=0.13.0            # Hiển thị đồ thị đo đạc, đo độ sâu
+PyOpenGL>=3.1.6              # Kết xuất 3D mô hình ROV
+pybullet>=3.2.5              # Mô phỏng vật lý 6-DOF ROV
 numpy>=1.24.0
-pymavlink>=2.4.37
-pyopengl>=3.1.6
+scipy>=1.11.0                # Nội suy bản đồ đáy biển (Seafloor mapping)
 
-# ── Feature 1: AR HUD + Video ──────────────────
-opencv-python>=4.8.0        # Video capture, HUD overlay
+# ── Hardware, Navigation & Telemetry ──────────────────────────────────
+pymavlink>=2.4.37            # Giao thức MAVLink điều khiển ROV
+pyserial>=3.5                # Kết nối cổng COM / USB Serial
+pygame>=2.5.0                # Đọc tín hiệu tay cầm lái Gamepad/Joystick
 
-# ── Feature 2: AI Vision ───────────────────────
-# ultralytics>=8.0.0        # YOLOv8 — cài riêng khi cần:
-#   pip install ultralytics  # (~500MB, lazy load khi bật AI)
+# ── Video Streaming & Vision ──────────────────────────────────────────
+opencv-python>=4.8.0         # Xử lý luồng hình ảnh camera & AR HUD
+requests>=2.28.0             # REST API & cập nhật trực tuyến
+pydantic>=2.0.0
 
-# ── Feature 4: Seafloor Mapping ────────────────
-scipy>=1.11.0               # griddata nội suy lưới độ sâu
+# ── Voice & Audio Assistant (Optional) ────────────────────────────────
+sounddevice>=0.4.6           # Phát âm thanh cảnh báo
+edge-tts>=6.1.0              # Trợ lý giọng nói tiếng Việt AI
+SpeechRecognition>=3.10.0    # Nhận diện lệnh giọng nói
 
-# ── Optional / Enhanced ────────────────────────
-# pyqt6-webengine>=6.4.0   # Google Maps WebView (cài riêng nếu cần)
+# ── AI Object Detection (Optional) ────────────────────────────────────
+# Cài đặt thêm nếu muốn bật AI phát hiện đối tượng dưới nước:
+# pip install ultralytics

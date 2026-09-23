@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# =====================================================================
+# CNC NExora GCS - Script khởi chạy tự động cho macOS (Apple Silicon / Intel)
+# =====================================================================
+set -e
+
+cd "$(dirname "$0")"
+
+echo "======================================================="
+echo "   🚀 CNC NEXORA GCS - KHỞI CHẠY TRÊN HỆ ĐIỀU HÀNH MACOS"
+echo "======================================================="
+
+# Kiểm tra Python 3
+if ! command -v python3 &> /dev/null; then
+    echo "❌ Lỗi: Chưa cài đặt Python 3 trên Mac!"
+    echo "👉 Bạn có thể cài qua Homebrew: brew install python"
+    exit 1
+fi
+
+# Tạo môi trường ảo nếu chưa có
+if [ ! -d "env" ]; then
+    echo "📦 Lần đầu chạy: Đang khởi tạo môi trường ảo Python (env)..."
+    python3 -m venv env
+    source env/bin/activate
+    echo "📦 Đang cài đặt các thư viện cần thiết..."
+    pip install --upgrade pip
+    pip install -r requirements.txt
+else
+    source env/bin/activate
+fi
+
+# Khởi chạy phần mềm
+echo "✅ Đang khởi động giao diện GCS ROV..."
+python3 main.py "$@"

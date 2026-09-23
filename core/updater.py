@@ -275,41 +275,67 @@ def apply_offline_patch(zip_file_path: str, restart_after: bool = True) -> tuple
 
 def _launch_restart_script(app_exe_path: str):
     """
-    Tạo và khởi chạy script batch ngầm để tắt ứng dụng hiện tại,
-    chờ đóng hẳn và mở lại ứng dụng với code mới.
+    Tạo và khởi chạy script ngầm để tắt ứng dụng hiện tại,
+    chờ đóng hẳn và mở lại ứng dụng với code mới (hỗ trợ Windows, Linux, macOS).
     """
     is_frozen = getattr(sys, "frozen", False)
-    bat_path = os.path.join(tempfile.gettempdir(), "nexora_gcs_restart.bat")
     
-    if is_frozen:
-        exe_name = os.path.basename(app_exe_path)
-        bat_content = f"""@echo off
+    if os.name == "nt":
+        # Windows (.bat script)
+        bat_path = os.path.join(tempfile.gettempdir(), "nexora_gcs_restart.bat")
+        if is_frozen:
+            exe_name = os.path.basename(app_exe_path)
+            bat_content = f"""@echo off
 timeout /t 1 /nobreak >nul
 taskkill /f /im "{exe_name}" >nul 2>&1
 timeout /t 1 /nobreak >nul
 start "" "{app_exe_path}"
 del "%~f0"
 """
-    else:
-        # Khi đang debug trong môi trường Python source
-        main_py = os.path.join(get_app_dir(), "main.py")
-        bat_content = f"""@echo off
+        else:
+            main_py = os.path.join(get_app_dir(), "main.py")
+            bat_content = f"""@echo off
 timeout /t 1 /nobreak >nul
 start "" "{sys.executable}" "{main_py}"
 del "%~f0"
 """
+        with open(bat_path, "w", encoding="utf-8") as f:
+            f.write(bat_content)
 
-    with open(bat_path, "w", encoding="utf-8") as f:
-        f.write(bat_content)
+        subprocess.Popen(
+            ["cmd.exe", "/c", bat_path],
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            close_fds=True
+        )
+    else:
+        # Linux & macOS (.sh shell script)
+        sh_path = os.path.join(tempfile.gettempdir(), "nexora_gcs_restart.sh")
+        if is_frozen:
+            exe_name = os.path.basename(app_exe_path)
+            sh_content = f"""#!/bin/sh
+sleep 1
+pkill -f "{exe_name}" 2>/dev/null || true
+sleep 1
+"{app_exe_path}" &
+rm -f "$0"
+"""
+        else:
+            main_py = os.path.join(get_app_dir(), "main.py")
+            sh_content = f"""#!/bin/sh
+sleep 1
+"{sys.executable}" "{main_py}" &
+rm -f "$0"
+"""
+        with open(sh_path, "w", encoding="utf-8") as f:
+            f.write(sh_content)
+        try:
+            os.chmod(sh_path, 0o755)
+        except Exception:
+            pass
 
-    # Chạy script batch ẩn nền
-    subprocess.Popen(
-        ["cmd.exe", "/c", bat_path],
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        close_fds=True
-    )
+        subprocess.Popen(["/bin/sh", sh_path], close_fds=True)
 
-    # Thoát ứng dụng hiện tại để batch restart
+    # Thoát ứng dụng hiện tại để script restart
     QtCore.QTimer.singleShot(200, lambda: QtWidgets.QApplication.quit())
 
 

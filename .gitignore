@@ -1,4 +1,32 @@
-dist/
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# Virtual Environments
+env/
+venv/
+.venv/
+ENV/
+
+# Distribution & Build outputs
 build/
+dist/
 *.exe
 *.pkg
+*.dmg
+*.AppImage
+Output/Setup*.exe
+Output/patches/Update_*.zip
+
+# Temporary Logs & Cache
+logs/*.csv
+logs/*.log
+*.sqlite3-journal
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
