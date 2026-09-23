@@ -2591,7 +2591,12 @@ def main():
     }
 
     # Cấu hình cờ Chromium cho QWebEngineView (WebRTC LAN, Autoplay, GPU)
+    if os.name != "nt":
+        os.environ["QTWEBENGINE_DISABLE_SANDBOX"] = "1"
+
+    extra_linux_flags = "--no-sandbox " if os.name != "nt" else ""
     os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+        extra_linux_flags +
         "--autoplay-policy=no-user-gesture-required "
         "--unsafely-treat-insecure-origin-as-secure=http://192.168.2.2:8889,http://192.168.2.2:8555,http://192.168.2.2:8554,http://192.168.2.2,http://192.168.2.2:2770,http://192.168.2.2:80 "
         "--allow-running-insecure-content "

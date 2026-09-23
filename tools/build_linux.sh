@@ -52,7 +52,32 @@ pyinstaller --noconfirm --windowed --name=GCS_ROV \
     --add-data "LICENSE.txt:." \
     main.py
 
-# 4. Đóng gói thành Tar.gz
+# 4. Cấp quyền thực thi và tạo script khởi chạy run.sh
+chmod +x dist/GCS_ROV/GCS_ROV
+
+cat << 'EOF' > dist/GCS_ROV/run.sh
+#!/usr/bin/env bash
+cd "$(dirname "$0")"
+export QTWEBENGINE_DISABLE_SANDBOX=1
+export QT_QPA_PLATFORM=xcb
+./GCS_ROV "$@"
+EOF
+chmod +x dist/GCS_ROV/run.sh
+
+cat << 'EOF' > dist/GCS_ROV/CNC_NExora_GCS.desktop
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=CNC NExora GCS
+Comment=Subsea ROV Ground Control Station
+Exec=sh -c 'cd "$(dirname "%k")" && ./run.sh'
+Icon=iconapp
+Terminal=false
+Categories=Utility;Engineering;
+EOF
+chmod +x dist/GCS_ROV/CNC_NExora_GCS.desktop
+
+# 5. Đóng gói thành Tar.gz
 echo ""
 echo "📦 [2/2] Đang đóng gói bản nén phân phối Linux..."
 TAR_FILE="$OUTPUT_DIR/CNC_NExora_GCS_v1.1.0_Linux_x86_64.tar.gz"
