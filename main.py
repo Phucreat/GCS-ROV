@@ -43,7 +43,10 @@ from core.physics_engine import PhysicsEngine
 from database import DatabaseManager, AsyncTelemetryLogger, ReportExporter
 from GUI.widgets.blueos_manager import BlueOSManagerWindow
 from GUI.widgets.gl_3d_widget import GLROVWidget
-from GUI.widgets.pyvista_3d_widget import PyVista3DWidget
+try:
+    from GUI.widgets.pyvista_3d_widget import PyVista3DWidget
+except Exception:
+    PyVista3DWidget = None
 from GUI.widgets.gl_compass_3d_widget import GLCompass3DWidget
 from GUI.widgets.pilot_telemetry_widget import PilotTelemetryWidget
 from GUI.widgets.power_widget import PowerWidget
@@ -424,7 +427,10 @@ class ROVMainWindow(QMainWindow):
         self.ui.opw_motion.hide()
         layout.removeWidget(self.ui.opw_motion)
 
-        self.gl_3d = PyVista3DWidget(parent=parent, default_map="RESERVOIR")
+        if PyVista3DWidget is not None:
+            self.gl_3d = PyVista3DWidget(parent=parent, default_map="RESERVOIR")
+        else:
+            self.gl_3d = GLROVWidget(parent=parent)
         layout.addWidget(self.gl_3d)
         layout.setStretch(0, 1)   # Title Label
         layout.setStretch(1, 20)  # Embedded 3D Render Viewport

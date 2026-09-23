@@ -37,6 +37,8 @@ echo "🚀 [1/2] Đang biên dịch macOS Application Bundle (PyInstaller)..."
 pyinstaller --noconfirm --windowed --name="CNC_NExora_GCS" \
     --collect-all OpenGL \
     --collect-all pyqtgraph \
+    --collect-all pyvista \
+    --collect-all pyvistaqt \
     --add-data "GUI:GUI" \
     --add-data "AI:AI" \
     --add-data "assets:assets" \
